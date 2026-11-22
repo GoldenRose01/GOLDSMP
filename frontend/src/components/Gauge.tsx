@@ -18,11 +18,11 @@ export const Gauge: React.FC<GaugeProps> = ({
   const clamped = Math.max(0, Math.min(100, isNaN(value) ? 0 : value));
   const radius = 44;
   const circumference = 2 * Math.PI * radius;
-  const arcLength = circumference * 0.75; // 270-degree AMP-style arc
+  const arcLength = circumference * 0.75; // 270-degree Stark HUD arc
   const dashOffset = arcLength - (clamped / 100) * arcLength;
 
   const strokeColor =
-    clamped > 88 ? 'var(--danger)' : clamped > 70 ? 'var(--warning)' : color;
+    clamped > 88 ? 'var(--danger)' : clamped > 72 ? 'var(--warning)' : color;
 
   return (
     <div
@@ -36,31 +36,55 @@ export const Gauge: React.FC<GaugeProps> = ({
         gap: 6,
       }}
     >
-      <div style={{ position: 'relative', width: 112, height: 112 }}>
-        <svg viewBox="0 0 110 110" width="112" height="112">
+      <div style={{ position: 'relative', width: 118, height: 118 }}>
+        <svg viewBox="0 0 116 116" width="118" height="118">
+          {/* Outer HUD segmented ring */}
           <circle
-            cx="55"
-            cy="55"
+            cx="58"
+            cy="58"
+            r="53"
+            fill="none"
+            stroke="rgba(245, 185, 50, 0.18)"
+            strokeWidth="1.2"
+            strokeDasharray="6 4"
+          />
+          {/* Inner Arc Reactor ring */}
+          <circle
+            cx="58"
+            cy="58"
+            r="35"
+            fill="none"
+            stroke="rgba(56, 189, 248, 0.14)"
+            strokeWidth="1"
+          />
+          {/* Track */}
+          <circle
+            cx="58"
+            cy="58"
             r={radius}
             fill="none"
-            stroke="var(--bg-input)"
-            strokeWidth="9"
+            stroke="rgba(255, 255, 255, 0.06)"
+            strokeWidth="8.5"
             strokeLinecap="round"
             strokeDasharray={`${arcLength} ${circumference}`}
-            transform="rotate(135 55 55)"
+            transform="rotate(135 58 58)"
           />
+          {/* Active Stark Gold / Arc bar */}
           <circle
-            cx="55"
-            cy="55"
+            cx="58"
+            cy="58"
             r={radius}
             fill="none"
             stroke={strokeColor}
-            strokeWidth="9"
+            strokeWidth="8.5"
             strokeLinecap="round"
             strokeDasharray={`${arcLength} ${circumference}`}
             strokeDashoffset={dashOffset}
-            transform="rotate(135 55 55)"
-            style={{ transition: 'stroke-dashoffset 0.4s ease, stroke 0.3s ease' }}
+            transform="rotate(135 58 58)"
+            style={{
+              transition: 'stroke-dashoffset 0.4s ease, stroke 0.3s ease',
+              filter: 'drop-shadow(0 0 6px rgba(245, 185, 50, 0.45))',
+            }}
           />
         </svg>
         <div
@@ -79,7 +103,7 @@ export const Gauge: React.FC<GaugeProps> = ({
               fontFamily: 'var(--font-mono)',
               fontWeight: 700,
               fontSize: 16,
-              color: 'var(--text-primary)',
+              color: '#fff4d2',
             }}
           >
             {displayValue}
@@ -91,7 +115,16 @@ export const Gauge: React.FC<GaugeProps> = ({
           )}
         </div>
       </div>
-      <span style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--text-secondary)' }}>
+      <span
+        style={{
+          fontFamily: 'var(--font-display)',
+          fontSize: 13.5,
+          fontWeight: 700,
+          letterSpacing: '0.07em',
+          textTransform: 'uppercase',
+          color: 'var(--text-secondary)',
+        }}
+      >
         {label}
       </span>
     </div>
