@@ -14,6 +14,7 @@ import { Gauge } from '../components/Gauge';
 import { SparkChart } from '../components/SparkChart';
 import {
   Activity,
+  AlertTriangle,
   Archive,
   ArrowLeft,
   CalendarClock,
@@ -32,6 +33,7 @@ import {
   Square,
   Terminal,
   Trash2,
+  X,
 } from 'lucide-react';
 
 interface InstanceDetailPageProps {
@@ -272,12 +274,43 @@ export const InstanceDetailPage: React.FC<InstanceDetailPageProps> = ({
     onNotify(`File ${editingPath} salvato`);
   };
 
-  const deleteInstance = async () => {
-    if (!confirm(`Eliminare l'istanza "${inst?.name}"?`)) return;
-    await api(`/api/instances/${instanceId}`, { method: 'DELETE' });
-    onNotify('Istanza eliminata');
-    onRefreshInstances();
-    onBack();
+  // Triple-confirmation delete modal state
+  const [deleteModalOpen, setDeleteModalOpen] = useState(false);
+  const [deleteStep, setDeleteStep] = useState<1 | 2 | 3>(1);
+  const [deleteAckChecked, setDeleteAckChecked] = useState(false);
+  const [deleteFilesChecked, setDeleteFilesChecked] = useState(false);
+  const [deleteConfirmText, setDeleteConfirmText] = useState('');
+  const [deleting, setDeleting] = useState(false);
+
+  const openDeleteModal = () => {
+    setDeleteStep(1);
+    setDeleteAckChecked(false);
+    setDeleteFilesChecked(false);
+    setDeleteConfirmText('');
+    setDeleteModalOpen(true);
+  };
+
+  const executeFinalDelete = async () => {
+    if (deleteConfirmText.trim() !== 'CONFERMA') return;
+    setDeleting(true);
+    try {
+      await api(
+        `/api/instances/${instanceId}?delete_files=${deleteFilesChecked ? 'true' : 'false'}`,
+        { method: 'DELETE' }
+      );
+      setDeleteModalOpen(false);
+      onNotify(
+        deleteFilesChecked
+          ? 'Istanza e file eliminati definitivamente'
+          : 'Istanza eliminata dal pannello'
+      );
+      onRefreshInstances();
+      onBack();
+    } catch (err: any) {
+      onNotify(`Errore eliminazione: ${err.message}`);
+    } finally {
+      setDeleting(false);
+    }
   };
 
   if (!inst) {
@@ -323,6 +356,9 @@ export const InstanceDetailPage: React.FC<InstanceDetailPageProps> = ({
           </button>
           <button className="btn btn-secondary" disabled={!isRunning} onClick={() => powerAction('kill')} title="SIGKILL">
             <Skull size={14} /> Kill
+          </button>
+          <button className="btn btn-danger" onClick={openDeleteModal} title="Elimina istanza (tripla conferma)">
+            <Trash2 size={14} /> Elimina
           </button>
         </div>
       </div>
@@ -562,7 +598,7 @@ export const InstanceDetailPage: React.FC<InstanceDetailPageProps> = ({
                   Rimuove questa istanza dal pannello (arresta il processo se attivo).
                 </div>
               </div>
-              <button type="button" className="btn btn-danger" onClick={deleteInstance}>
+              <button type="button" className="btn btn-danger" onClick={openDeleteModal}>
                 <Trash2 size={14} /> Elimina Istanza
               </button>
             </div>
@@ -1029,6 +1065,202 @@ export const InstanceDetailPage: React.FC<InstanceDetailPageProps> = ({
                 ))}
               </tbody>
             </table>
+          </div>
+        </div>
+      )}
+      {/* TRIPLE CONFIRMATION DELETE MODAL */}
+      {deleteModalOpen && (
+        <div className="modal-backdrop" onClick={() => !deleting && setDeleteModalOpen(false)}>
+          <div
+            className="modal"
+            style={{ maxWidth: 520, borderColor: 'rgba(239, 68, 68, 0.45)' }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="modal-header">
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <AlertTriangle size={20} color="var(--danger)" />
+                <div>
+                  <h2 style={{ fontSize: 16, fontWeight: 700, color: 'var(--danger)' }}>
+                    Eliminazione Istanza — Conferma {deleteStep} di 3
+                  </h2>
+                  <p style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
+                    Istanza: <strong>{inst.name}</strong> ({inst.template_id})
+                  </p>
+                </div>
+              </div>
+              <button
+                className="btn btn-secondary btn-sm"
+                disabled={deleting}
+                onClick={() => setDeleteModalOpen(false)}
+              >
+                <X size={15} />
+              </button>
+            </div>
+
+            <div className="modal-body">
+              {/* Step progress bar */}
+              <div style={{ display: 'flex', gap: 6 }}>
+                {[1, 2, 3].map((step) => (
+                  <div
+                    key={step}
+                    style={{
+                      flex: 1,
+                      height: 4,
+                      borderRadius: 99,
+                      background: step <= deleteStep ? 'var(--danger)' : 'var(--bg-input)',
+                    }}
+                  />
+                ))}
+              </div>
+
+              {deleteStep === 1 && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                  <p style={{ fontSize: 13.5 }}>
+                    Stai per avviare la procedura di eliminazione dell&apos;istanza{' '}
+                    <strong>{inst.name}</strong>.
+                  </p>
+                  <div
+                    style={{
+                      background: 'var(--bg-input)',
+                      border: '1px solid var(--border-subtle)',
+                      borderRadius: 'var(--radius-sm)',
+                      padding: 12,
+                      fontFamily: 'var(--font-mono)',
+                      fontSize: 12,
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: 4,
+                    }}
+                  >
+                    <div>Template: {inst.template_id}</div>
+                    <div>Porta: {inst.port}</div>
+                    <div>Stato attuale: {inst.status}</div>
+                    <div>Directory: {inst.work_dir}</div>
+                  </div>
+                  <p style={{ fontSize: 12.5, color: 'var(--text-secondary)' }}>
+                    Se il processo è attivo, verrà terminato immediatamente prima della rimozione.
+                  </p>
+                </div>
+              )}
+
+              {deleteStep === 2 && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+                  <div
+                    style={{
+                      background: 'var(--danger-soft)',
+                      border: '1px solid rgba(239, 68, 68, 0.3)',
+                      borderRadius: 'var(--radius-sm)',
+                      padding: 12,
+                      fontSize: 13,
+                      color: 'var(--text-primary)',
+                    }}
+                  >
+                    <strong>Attenzione:</strong> questa operazione rimuoverà definitivamente
+                    l&apos;istanza e le sue configurazioni dal pannello GOLDSMP.
+                  </div>
+
+                  <label style={{ display: 'flex', alignItems: 'flex-start', gap: 10, fontSize: 13 }}>
+                    <input
+                      type="checkbox"
+                      checked={deleteAckChecked}
+                      onChange={(e) => setDeleteAckChecked(e.target.checked)}
+                      style={{ marginTop: 3 }}
+                    />
+                    <span>
+                      Confermo di aver capito che l&apos;eliminazione di <strong>{inst.name}</strong> è
+                      irreversibile.
+                    </span>
+                  </label>
+
+                  <label
+                    style={{
+                      display: 'flex',
+                      alignItems: 'flex-start',
+                      gap: 10,
+                      fontSize: 13,
+                      color: 'var(--text-secondary)',
+                    }}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={deleteFilesChecked}
+                      onChange={(e) => setDeleteFilesChecked(e.target.checked)}
+                      style={{ marginTop: 3 }}
+                    />
+                    <span>
+                      Elimina anche tutti i file e i salvataggi nella cartella su disco (
+                      <code>{inst.work_dir}</code>).
+                    </span>
+                  </label>
+                </div>
+              )}
+
+              {deleteStep === 3 && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                  <p style={{ fontSize: 13.5 }}>
+                    Ultima verifica di sicurezza: scrivi esattamente{' '}
+                    <strong style={{ color: 'var(--danger)', fontFamily: 'var(--font-mono)' }}>
+                      CONFERMA
+                    </strong>{' '}
+                    nel campo qui sotto per eliminare definitivamente <strong>{inst.name}</strong>.
+                  </p>
+                  <div className="field">
+                    <label>Digita CONFERMA (tutto maiuscolo)</label>
+                    <input
+                      autoFocus
+                      placeholder="CONFERMA"
+                      value={deleteConfirmText}
+                      onChange={(e) => setDeleteConfirmText(e.target.value)}
+                      style={{ fontFamily: 'var(--font-mono)', letterSpacing: '0.06em' }}
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className="modal-footer">
+              <button
+                type="button"
+                className="btn btn-secondary"
+                disabled={deleting}
+                onClick={() => setDeleteModalOpen(false)}
+              >
+                Annulla
+              </button>
+
+              {deleteStep === 1 && (
+                <button
+                  type="button"
+                  className="btn btn-danger"
+                  onClick={() => setDeleteStep(2)}
+                >
+                  Conferma Passo 1/3
+                </button>
+              )}
+
+              {deleteStep === 2 && (
+                <button
+                  type="button"
+                  className="btn btn-danger"
+                  disabled={!deleteAckChecked}
+                  onClick={() => setDeleteStep(3)}
+                >
+                  Conferma Passo 2/3
+                </button>
+              )}
+
+              {deleteStep === 3 && (
+                <button
+                  type="button"
+                  className="btn btn-danger"
+                  disabled={deleteConfirmText.trim() !== 'CONFERMA' || deleting}
+                  onClick={executeFinalDelete}
+                >
+                  <Trash2 size={14} />{' '}
+                  {deleting ? 'Eliminazione...' : 'Elimina Definitivamente (3/3)'}
+                </button>
+              )}
+            </div>
           </div>
         </div>
       )}

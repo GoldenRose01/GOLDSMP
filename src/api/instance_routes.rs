@@ -5,7 +5,7 @@ use crate::templates::find_template;
 use axum::{
     extract::{
         ws::{Message, WebSocket, WebSocketUpgrade},
-        Path, State,
+        Path, Query, State,
     },
     http::StatusCode,
     response::IntoResponse,
@@ -205,10 +205,17 @@ pub async fn update_instance(
     Ok(Json(state.pm.load_instance(&id).unwrap()))
 }
 
+#[derive(Deserialize)]
+pub struct DeleteInstanceQuery {
+    #[serde(default)]
+    pub delete_files: bool,
+}
+
 pub async fn delete_instance(
     State(state): State<AppState>,
     auth: AuthUser,
     Path(id): Path<String>,
+    Query(q): Query<DeleteInstanceQuery>,
 ) -> Result<StatusCode, (StatusCode, String)> {
     let inst = state
         .pm
@@ -221,11 +228,24 @@ pub async fn delete_instance(
         conn.execute("DELETE FROM instances WHERE id = ?1", params![id])
             .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     }
+
+    if q.delete_files {
+        let wd = PathBuf::from(&inst.work_dir);
+        let instances_root = state.data_dir.join("instances");
+        if wd.starts_with(&instances_root) && wd.exists() {
+            let _ = std::fs::remove_dir_all(&wd);
+        }
+    }
+
     state.db.log_audit(
         &auth.0.username,
         "INSTANCE_DELETE",
         &inst.name,
-        "Istanza rimossa dal pannello",
+        if q.delete_files {
+            "Istanza e file su disco eliminati definitivamente"
+        } else {
+            "Istanza rimossa dal pannello"
+        },
         "local",
     );
     Ok(StatusCode::NO_CONTENT)
