@@ -139,6 +139,7 @@ export const InstancesPage: React.FC<InstancesPageProps> = ({
         <div className="pill-group">
           {[
             { id: 'all', label: 'Tutte' },
+            { id: 'horizon', label: 'Horizon MC (Rust)' },
             { id: 'minecraft', label: 'Minecraft' },
             { id: 'steamcmd', label: 'SteamCMD' },
             { id: 'generic', label: 'Generiche' },

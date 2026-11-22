@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
+  <defs>
+    <linearGradient id="goldArmor" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#ffe699"/>
+      <stop offset="48%" stop-color="#f5b932"/>
+      <stop offset="100%" stop-color="#b87c10"/>
+    </linearGradient>
+    <linearGradient id="crimsonPlate" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#dc2626"/>
+      <stop offset="100%" stop-color="#7f1d1d"/>
+    </linearGradient>
+    <radialGradient id="arcGlow" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#e0f2fe"/>
+      <stop offset="45%" stop-color="#38bdf8"/>
+      <stop offset="100%" stop-color="#0284c7" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <!-- Outer Hexagonal Stark Shield -->
+  <polygon points="64,6 116,34 116,94 64,122 12,94 12,34" fill="#0d0d12" stroke="url(#goldArmor)" stroke-width="6" stroke-linejoin="round"/>
+  <!-- Crimson Armor Accents -->
+  <polygon points="64,14 108,38 98,44 64,25 30,44 20,38" fill="url(#crimsonPlate)"/>
+  <polygon points="20,90 30,84 64,103 98,84 108,90 64,114" fill="url(#crimsonPlate)"/>
+  <!-- Inner Gold Helmet / Crest -->
+  <polygon points="64,26 98,45 98,83 64,102 30,83 30,45" fill="none" stroke="url(#goldArmor)" stroke-width="3.5"/>
+  <!-- Central Arc Reactor Core -->
+  <circle cx="64" cy="64" r="24" fill="url(#arcGlow)"/>
+  <circle cx="64" cy="64" r="16" fill="#0c1928" stroke="#38bdf8" stroke-width="3"/>
+  <polygon points="64,77 51,56 77,56" fill="#e0f2fe" stroke="#38bdf8" stroke-width="2" stroke-linejoin="round"/>
+</svg>

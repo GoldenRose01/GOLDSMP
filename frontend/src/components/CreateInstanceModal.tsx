@@ -77,6 +77,7 @@ export const CreateInstanceModal: React.FC<CreateInstanceModalProps> = ({
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
               {[
                 { id: 'all', label: 'Tutti' },
+                { id: 'horizon', label: 'Horizon MC (Rust)' },
                 { id: 'minecraft', label: 'Minecraft' },
                 { id: 'steamcmd', label: 'SteamCMD' },
                 { id: 'generic', label: 'App Generiche' },

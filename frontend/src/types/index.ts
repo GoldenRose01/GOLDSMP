@@ -23,7 +23,7 @@ export interface TemplateSettingField {
 export interface AppTemplate {
   id: string;
   name: string;
-  category: 'minecraft' | 'steamcmd' | 'generic';
+  category: 'horizon' | 'minecraft' | 'steamcmd' | 'generic';
   description: string;
   icon: string;
   default_port: number;
@@ -248,4 +248,14 @@ export interface UpdateStatus {
   error?: string;
   config: UpdaterConfig;
 }
+
+export interface FtpInfo {
+  host: string;
+  port: number;
+  username: string;
+  password: string;
+  root_dir: string;
+  quick_folders: string[];
+}
+
 

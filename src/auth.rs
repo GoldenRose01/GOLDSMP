@@ -76,9 +76,22 @@ pub fn verify_jwt(token: &str, secret: &str) -> Result<Claims, String> {
 pub struct AuthUser(pub Claims);
 
 impl AuthUser {
-    pub fn has_permission(&self, perm: &str) -> bool {
+    pub fn has_full_access(&self) -> bool {
         self.0.role == "superadmin"
-            || self.0.permissions.iter().any(|p| p == "*" || p == perm)
+            || self.0.role == "admin"
+            || self.0.permissions.iter().any(|p| p == "*")
+    }
+
+    pub fn has_permission(&self, perm: &str) -> bool {
+        self.has_full_access() || self.0.permissions.iter().any(|p| p == perm)
+    }
+
+    pub fn can_access_instance(&self, instance_id: &str) -> bool {
+        if self.has_full_access() {
+            return true;
+        }
+        let tag = format!("instance:{}", instance_id);
+        self.0.permissions.iter().any(|p| p == &tag)
     }
 }
 

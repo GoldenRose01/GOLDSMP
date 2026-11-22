@@ -5,10 +5,12 @@ import {
   BackupEntry,
   ConsoleLine,
   FileEntry,
+  FtpInfo,
   Instance,
   MetricPoint,
   ModrinthHit,
   ScheduledTask,
+  User,
 } from '../types';
 import { Gauge } from '../components/Gauge';
 import { SparkChart } from '../components/SparkChart';
@@ -22,8 +24,11 @@ import {
   FileText,
   Folder,
   FolderPlus,
+  HardDrive,
+  KeyRound,
   Package,
   Play,
+  Plus,
   RotateCw,
   Save,
   Search,
@@ -33,7 +38,9 @@ import {
   Square,
   Terminal,
   Trash2,
+  Users,
   X,
+  Zap,
 } from 'lucide-react';
 
 interface InstanceDetailPageProps {
@@ -44,7 +51,17 @@ interface InstanceDetailPageProps {
   onNotify: (msg: string) => void;
 }
 
-type TabId = 'status' | 'console' | 'config' | 'files' | 'mods' | 'backups' | 'scheduler';
+type TabId =
+  | 'status'
+  | 'console'
+  | 'horizon'
+  | 'config'
+  | 'files'
+  | 'ftp'
+  | 'access'
+  | 'mods'
+  | 'backups'
+  | 'scheduler';
 
 export const InstanceDetailPage: React.FC<InstanceDetailPageProps> = ({
   instanceId,
@@ -56,6 +73,15 @@ export const InstanceDetailPage: React.FC<InstanceDetailPageProps> = ({
   const [tab, setTab] = useState<TabId>('status');
   const [inst, setInst] = useState<Instance | null>(null);
   const [metrics, setMetrics] = useState<MetricPoint[]>([]);
+  const [ftpInfo, setFtpInfo] = useState<FtpInfo | null>(null);
+  const [panelUsers, setPanelUsers] = useState<User[]>([]);
+  const [horizonInstalling, setHorizonInstalling] = useState(false);
+
+  // Per-instance user creation form
+  const [newUsername, setNewUsername] = useState('');
+  const [newEmail, setNewEmail] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [newScope, setNewScope] = useState<'this' | 'all'>('this');
 
   // Console state
   const [lines, setLines] = useState<ConsoleLine[]>([]);
@@ -159,11 +185,29 @@ export const InstanceDetailPage: React.FC<InstanceDetailPageProps> = ({
 
   // Tab data loaders
   useEffect(() => {
-    if (tab === 'files') loadFiles(curPath);
+    if (tab === 'files' || tab === 'ftp' || tab === 'horizon') {
+      loadFiles(curPath);
+      loadFtpInfo();
+    }
+    if (tab === 'access') loadPanelUsers();
     if (tab === 'backups') loadBackups();
     if (tab === 'scheduler') loadTasks();
     if (tab === 'mods' && modHits.length === 0) searchMods();
   }, [tab, curPath]);
+
+  const loadFtpInfo = async () => {
+    try {
+      const info = await api<FtpInfo>(`/api/instances/${instanceId}/ftp`);
+      setFtpInfo(info);
+    } catch {}
+  };
+
+  const loadPanelUsers = async () => {
+    try {
+      const list = await api<User[]>('/api/users');
+      setPanelUsers(list);
+    } catch {}
+  };
 
   const loadFiles = async (p: string) => {
     try {
@@ -368,8 +412,13 @@ export const InstanceDetailPage: React.FC<InstanceDetailPageProps> = ({
         {[
           { id: 'status', label: 'Stato & Metriche', icon: Activity },
           { id: 'console', label: 'Console Live', icon: Terminal },
+          ...(inst.template_id === 'horizon-mc' || inst.category === 'horizon'
+            ? [{ id: 'horizon', label: 'Horizon MC (Rust)', icon: Zap }]
+            : []),
           { id: 'config', label: 'Configurazione', icon: Settings },
           { id: 'files', label: 'File Manager', icon: Folder },
+          { id: 'ftp', label: 'FTP & Cartelle', icon: HardDrive },
+          { id: 'access', label: 'Accessi (+)', icon: Users },
           { id: 'mods', label: 'Mod & Plugin', icon: Package },
           { id: 'backups', label: 'Backup', icon: Archive },
           { id: 'scheduler', label: 'Scheduler', icon: CalendarClock },
@@ -606,12 +655,442 @@ export const InstanceDetailPage: React.FC<InstanceDetailPageProps> = ({
         </form>
       )}
 
+      {/* TAB HORIZON MC (RUST) DEDICATED MENU */}
+      {tab === 'horizon' && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+          <div className="card">
+            <div className="card-header" style={{ flexWrap: 'wrap' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <Zap size={18} color="var(--accent)" />
+                <span className="card-title">Horizon MC Server (Rust 26.3 Engine) — Gestione Rapida</span>
+              </div>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                <button
+                  className="btn btn-primary btn-sm"
+                  disabled={horizonInstalling}
+                  onClick={async () => {
+                    setHorizonInstalling(true);
+                    try {
+                      const res = await api<{ message: string }>(
+                        `/api/instances/${instanceId}/horizon/install`,
+                        { method: 'POST' }
+                      );
+                      onNotify(res.message);
+                      loadFiles(curPath);
+                    } catch (err: any) {
+                      onNotify(err.message);
+                    } finally {
+                      setHorizonInstalling(false);
+                    }
+                  }}
+                >
+                  <Download size={14} />{' '}
+                  {horizonInstalling
+                    ? 'Verifica/Download in corso...'
+                    : 'Scarica / Aggiorna Release Ufficiale Horizon'}
+                </button>
+                <button
+                  className="btn btn-secondary btn-sm"
+                  onClick={async () => {
+                    setTab('files');
+                    setCurPath('');
+                    try {
+                      const res = await api<{ path: string; content: string }>(
+                        `/api/instances/${instanceId}/files/content?path=server.toml`
+                      );
+                      setEditingPath(res.path);
+                      setEditingContent(res.content);
+                    } catch {}
+                  }}
+                >
+                  <FileText size={14} /> Apri server.toml
+                </button>
+              </div>
+            </div>
+
+            <p style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 14 }}>
+              <strong>Horizon MC</strong> è la riscrittura nativa in Rust di Minecraft Java Edition 26.3:
+              zero JVM, consumo RAM dimezzato, compatibile sia con client Horizon sia con client Vanilla Java 26.3,
+              mondi Vanilla e mod <code>.hmod</code>.
+            </p>
+
+            <div className="grid-4" style={{ marginBottom: 16 }}>
+              {[
+                { label: 'Cartella Mondo (world/)', folder: 'world', desc: 'Salvataggi, region e level.dat' },
+                { label: 'Mod Native (mods/)', folder: 'mods', desc: 'Mod Horizon .hmod e addon' },
+                { label: 'Datapack (datapacks/)', folder: 'datapacks', desc: 'Datapack Vanilla & Horizon' },
+                { label: 'Accesso FTP Diretto', folder: '__ftp__', desc: `Porta ${ftpInfo?.port || 2121} (${ftpInfo?.username || 'inst'})` },
+              ].map((item) => (
+                <button
+                  key={item.folder}
+                  type="button"
+                  className="card"
+                  style={{
+                    textAlign: 'left',
+                    padding: 14,
+                    cursor: 'pointer',
+                    border: '1px solid var(--border-subtle)',
+                  }}
+                  onClick={() => {
+                    if (item.folder === '__ftp__') {
+                      setTab('ftp');
+                    } else {
+                      setCurPath(item.folder);
+                      setTab('files');
+                    }
+                  }}
+                >
+                  <div style={{ fontWeight: 700, color: 'var(--accent-hover)', fontSize: 13.5 }}>
+                    {item.label}
+                  </div>
+                  <div style={{ fontSize: 11.5, color: 'var(--text-secondary)', marginTop: 4 }}>
+                    {item.desc}
+                  </div>
+                </button>
+              ))}
+            </div>
+
+            {tpl && (
+              <form onSubmit={saveConfig}>
+                <div className="card-header" style={{ marginTop: 8 }}>
+                  <span className="card-title">Configurazione Rapida server.toml</span>
+                  <button type="submit" className="btn btn-primary btn-sm">
+                    <Save size={14} /> Salva in server.toml
+                  </button>
+                </div>
+                <div className="grid-3">
+                  {tpl.settings_schema.map((field) => (
+                    <div key={field.key} className="field">
+                      <label>{field.label}</label>
+                      {field.field_type === 'select' && field.options ? (
+                        <select
+                          value={cfgSettings[field.key] ?? field.default_value}
+                          onChange={(e) =>
+                            setCfgSettings((s) => ({ ...s, [field.key]: e.target.value }))
+                          }
+                        >
+                          {field.options.map((opt) => (
+                            <option key={opt} value={opt}>
+                              {opt}
+                            </option>
+                          ))}
+                        </select>
+                      ) : field.field_type === 'boolean' ? (
+                        <select
+                          value={cfgSettings[field.key] ?? field.default_value}
+                          onChange={(e) =>
+                            setCfgSettings((s) => ({ ...s, [field.key]: e.target.value }))
+                          }
+                        >
+                          <option value="true">Attivo (true)</option>
+                          <option value="false">Disattivo (false)</option>
+                        </select>
+                      ) : (
+                        <input
+                          type={field.field_type === 'number' ? 'number' : 'text'}
+                          value={cfgSettings[field.key] ?? field.default_value}
+                          onChange={(e) =>
+                            setCfgSettings((s) => ({ ...s, [field.key]: e.target.value }))
+                          }
+                        />
+                      )}
+                      <span className="field-hint">{field.description}</span>
+                    </div>
+                  ))}
+                </div>
+              </form>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* TAB FTP & CARTELLE ISTANZA */}
+      {tab === 'ftp' && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+          <div className="card">
+            <div className="card-header" style={{ flexWrap: 'wrap' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <HardDrive size={18} color="var(--accent)" />
+                <span className="card-title">Server FTP Nativo dell&apos;Istanza (FileZilla / WinSCP / Cyberduck)</span>
+              </div>
+              <button
+                className="btn btn-secondary btn-sm"
+                onClick={async () => {
+                  const updated = await api<FtpInfo>(`/api/instances/${instanceId}/ftp/rotate`, {
+                    method: 'POST',
+                  });
+                  setFtpInfo(updated);
+                  onNotify('Nuova password FTP generata');
+                }}
+              >
+                <KeyRound size={14} /> Rigenera Password FTP
+              </button>
+            </div>
+
+            <p style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 16 }}>
+              Ogni istanza ha un accesso FTP isolato (chroot nella directory dell&apos;istanza) per caricare e
+              gestire direttamente la cartella del server, il <strong>mondo (world/)</strong>, le{' '}
+              <strong>mod (mods/)</strong>, i <strong>plugin (plugins/)</strong> e i file di configurazione.
+            </p>
+
+            {ftpInfo && (
+              <div className="grid-4" style={{ marginBottom: 16, fontFamily: 'var(--font-mono)', fontSize: 13 }}>
+                <div className="card" style={{ padding: 14 }}>
+                  <div style={{ color: 'var(--text-muted)', fontSize: 11 }}>HOST / PROTOCOLLO</div>
+                  <div style={{ fontWeight: 700, marginTop: 4 }}>
+                    ftp://{window.location.hostname || ftpInfo.host}
+                  </div>
+                </div>
+                <div className="card" style={{ padding: 14 }}>
+                  <div style={{ color: 'var(--text-muted)', fontSize: 11 }}>PORTA FTP</div>
+                  <div style={{ fontWeight: 700, color: 'var(--accent-hover)', marginTop: 4 }}>
+                    {ftpInfo.port}
+                  </div>
+                </div>
+                <div className="card" style={{ padding: 14 }}>
+                  <div style={{ color: 'var(--text-muted)', fontSize: 11 }}>USERNAME FTP</div>
+                  <div style={{ fontWeight: 700, marginTop: 4 }}>{ftpInfo.username}</div>
+                </div>
+                <div className="card" style={{ padding: 14 }}>
+                  <div style={{ color: 'var(--text-muted)', fontSize: 11 }}>PASSWORD FTP</div>
+                  <div style={{ fontWeight: 700, color: 'var(--arc-cyan)', marginTop: 4 }}>
+                    {ftpInfo.password}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {ftpInfo && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                <div style={{ fontSize: 12.5, color: 'var(--text-secondary)' }}>
+                  URL Rapido FileZilla / Terminale:
+                </div>
+                <pre
+                  style={{
+                    background: 'var(--bg-input)',
+                    border: '1px solid var(--border-subtle)',
+                    padding: 12,
+                    borderRadius: 'var(--radius-sm)',
+                    fontFamily: 'var(--font-mono)',
+                    fontSize: 12.5,
+                    color: 'var(--accent-hover)',
+                    overflowX: 'auto',
+                  }}
+                >
+                  {`ftp://${ftpInfo.username}:${ftpInfo.password}@${window.location.hostname || ftpInfo.host}:${ftpInfo.port}/`}
+                </pre>
+              </div>
+            )}
+          </div>
+
+          <div className="card">
+            <div className="card-header">
+              <span className="card-title">Accesso Rapido Cartelle Server (Root, Mondo, Mod, Plugin)</span>
+            </div>
+            <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+              <button
+                className="btn btn-primary btn-sm"
+                onClick={() => {
+                  setCurPath('');
+                  setTab('files');
+                }}
+              >
+                <Folder size={14} /> Cartella Root Server (/)
+              </button>
+              {['world', 'mods', 'plugins', 'datapacks', 'logs'].map((folder) => (
+                <button
+                  key={folder}
+                  className="btn btn-secondary btn-sm"
+                  onClick={async () => {
+                    try {
+                      await api(`/api/instances/${instanceId}/files/mkdir`, {
+                        method: 'POST',
+                        body: JSON.stringify({ path: folder }),
+                      });
+                    } catch {}
+                    setCurPath(folder);
+                    setTab('files');
+                  }}
+                >
+                  <Folder size={14} /> /{folder}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* TAB ACCESSI & PERMESSI ISTANZA (+) */}
+      {tab === 'access' && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+          <div className="card">
+            <div className="card-header">
+              <span className="card-title">
+                Crea Nuovo Utente per "{inst.name}" o Intero Server (con Invio Email Automatico)
+              </span>
+            </div>
+            <p style={{ fontSize: 12.5, color: 'var(--text-secondary)', marginBottom: 14 }}>
+              Alla creazione viene inviata automaticamente una mail al possessore con oggetto{' '}
+              <strong>&quot;Il tuo account per GOLDSMP è attivo&quot;</strong>. Puoi limitare l&apos;utente solo a
+              questa istanza oppure dargli accesso all&apos;intero server.
+            </p>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              <input
+                placeholder="Username"
+                value={newUsername}
+                onChange={(e) => setNewUsername(e.target.value)}
+              />
+              <input
+                placeholder="Email proprietario (riceverà la mail)"
+                value={newEmail}
+                onChange={(e) => setNewEmail(e.target.value)}
+                style={{ minWidth: 230 }}
+              />
+              <input
+                type="password"
+                placeholder="Password"
+                value={newPassword}
+                onChange={(e) => setNewPassword(e.target.value)}
+              />
+              <select value={newScope} onChange={(e) => setNewScope(e.target.value as any)}>
+                <option value="this">Solo questa istanza ({inst.name})</option>
+                <option value="all">Intero Server (Tutte le istanze)</option>
+              </select>
+              <button
+                className="btn btn-primary btn-sm"
+                onClick={async () => {
+                  if (!newUsername.trim() || !newPassword) return;
+                  try {
+                    const perms =
+                      newScope === 'all'
+                        ? ['*']
+                        : [`instance:${instanceId}`, 'instances.read', 'instances.control', 'files.write'];
+                    await api('/api/users', {
+                      method: 'POST',
+                      body: JSON.stringify({
+                        username: newUsername.trim(),
+                        email: newEmail.trim(),
+                        password: newPassword,
+                        role: newScope === 'all' ? 'admin' : 'operator',
+                        permissions: perms,
+                      }),
+                    });
+                    setNewUsername('');
+                    setNewEmail('');
+                    setNewPassword('');
+                    onNotify(
+                      `Utente creato! Inviata mail "Il tuo account per GOLDSMP è attivo"`
+                    );
+                    loadPanelUsers();
+                  } catch (err: any) {
+                    onNotify(err.message);
+                  }
+                }}
+              >
+                <Plus size={14} /> Crea & Invia Email
+              </button>
+            </div>
+          </div>
+
+          <div className="card">
+            <div className="card-header">
+              <span className="card-title">
+                Utenti Esistenti — Premi (+) per abilitare utenti di altre istanze anche su "{inst.name}"
+              </span>
+            </div>
+            <div className="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Username</th>
+                    <th>Email</th>
+                    <th>Ruolo</th>
+                    <th>Accesso Attuale</th>
+                    <th style={{ textAlign: 'right' }}>Permesso su "{inst.name}"</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {panelUsers.map((u) => {
+                    const isGlobal =
+                      u.role === 'superadmin' ||
+                      u.role === 'admin' ||
+                      u.permissions.includes('*');
+                    const hasThis =
+                      isGlobal || u.permissions.includes(`instance:${instanceId}`);
+                    const otherInstances = u.permissions
+                      .filter((p) => p.startsWith('instance:') && p !== `instance:${instanceId}`)
+                      .map((p) => p.replace('instance:', '').slice(0, 8));
+
+                    return (
+                      <tr key={u.id}>
+                        <td style={{ fontWeight: 600 }}>{u.username}</td>
+                        <td>{u.email}</td>
+                        <td>{u.role}</td>
+                        <td style={{ fontSize: 12, fontFamily: 'var(--font-mono)' }}>
+                          {isGlobal ? (
+                            <span className="status-badge status-running">Intero Server (*)</span>
+                          ) : hasThis ? (
+                            <span className="status-badge status-starting">
+                              Abilitato qui{' '}
+                              {otherInstances.length > 0 && `(+${otherInstances.length} altre)`}
+                            </span>
+                          ) : (
+                            <span className="status-badge status-stopped">
+                              Altre istanze ({otherInstances.join(', ') || 'nessuna'})
+                            </span>
+                          )}
+                        </td>
+                        <td style={{ textAlign: 'right' }}>
+                          {isGlobal ? (
+                            <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+                              Accesso Globale
+                            </span>
+                          ) : hasThis ? (
+                            <button
+                              className="btn btn-danger btn-sm"
+                              onClick={async () => {
+                                await api(`/api/users/${u.id}/instances/${instanceId}`, {
+                                  method: 'DELETE',
+                                });
+                                onNotify(`Rimosso accesso a ${u.username} per questa istanza`);
+                                loadPanelUsers();
+                              }}
+                            >
+                              Rimuovi da questa istanza
+                            </button>
+                          ) : (
+                            <button
+                              className="btn btn-primary btn-sm"
+                              title="Aggiungi permesso anche per questa istanza"
+                              onClick={async () => {
+                                await api(`/api/users/${u.id}/instances`, {
+                                  method: 'POST',
+                                  body: JSON.stringify({ instance_id: instanceId }),
+                                });
+                                onNotify(`Aggiunto permesso (+) a ${u.username} per "${inst.name}"!`);
+                                loadPanelUsers();
+                              }}
+                            >
+                              <Plus size={14} /> Aggiungi a questa istanza
+                            </button>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* TAB 4: FILE MANAGER */}
       {tab === 'files' && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
           <div className="card">
             <div className="card-header" style={{ flexWrap: 'wrap' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
                 <span className="card-title">/{curPath}</span>
                 {curPath && (
                   <button
@@ -625,6 +1104,39 @@ export const InstanceDetailPage: React.FC<InstanceDetailPageProps> = ({
                     .. Livello superiore
                   </button>
                 )}
+                {/* Quick jump buttons for Server / World / Mods / Plugins */}
+                <div style={{ display: 'flex', gap: 4, marginLeft: 8, flexWrap: 'wrap' }}>
+                  <button
+                    className={`btn btn-sm ${curPath === '' ? 'btn-primary' : 'btn-secondary'}`}
+                    onClick={() => setCurPath('')}
+                  >
+                    Root /
+                  </button>
+                  {['world', 'mods', 'plugins'].map((qf) => (
+                    <button
+                      key={qf}
+                      className={`btn btn-sm ${curPath === qf ? 'btn-primary' : 'btn-secondary'}`}
+                      onClick={async () => {
+                        try {
+                          await api(`/api/instances/${instanceId}/files/mkdir`, {
+                            method: 'POST',
+                            body: JSON.stringify({ path: qf }),
+                          });
+                        } catch {}
+                        setCurPath(qf);
+                      }}
+                    >
+                      /{qf}
+                    </button>
+                  ))}
+                  <button
+                    className="btn btn-secondary btn-sm"
+                    onClick={() => setTab('ftp')}
+                    title="Credenziali FTP per FileZilla / WinSCP"
+                  >
+                    <HardDrive size={13} /> Credenziali FTP
+                  </button>
+                </div>
               </div>
               <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                 <button

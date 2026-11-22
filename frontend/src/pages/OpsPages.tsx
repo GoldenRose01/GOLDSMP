@@ -3,6 +3,7 @@ import { api } from '../api/client';
 import {
   AuditLogEntry,
   HostSystemInfo,
+  Instance,
   PanelSettings,
   UpdateStatus,
   UpdaterConfig,
@@ -157,12 +158,22 @@ export const WebhooksPage: React.FC<{
 // --- USERS & RBAC PAGE ---
 export const UsersPage: React.FC<{ onNotify: (m: string) => void }> = ({ onNotify }) => {
   const [users, setUsers] = useState<User[]>([]);
+  const [instances, setInstances] = useState<Instance[]>([]);
   const [username, setUsername] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [role, setRole] = useState('operator');
+  const [scopeTarget, setScopeTarget] = useState<string>('*');
+  const [addInstPick, setAddInstPick] = useState<Record<string, string>>({});
 
-  const load = async () => setUsers(await api<User[]>('/api/users'));
+  const load = async () => {
+    const [u, insts] = await Promise.all([
+      api<User[]>('/api/users'),
+      api<Instance[]>('/api/instances'),
+    ]);
+    setUsers(u);
+    setInstances(insts);
+  };
   useEffect(() => {
     load();
   }, []);
@@ -171,18 +182,26 @@ export const UsersPage: React.FC<{ onNotify: (m: string) => void }> = ({ onNotif
     <div>
       <div className="page-header">
         <div>
-          <h1>Utenti & Ruoli RBAC</h1>
-          <p>Utenti pannello illimitati con controllo granulare dei permessi.</p>
+          <h1>Utenti, Permessi Istanza (+) & Notifica Email</h1>
+          <p>
+            Ogni nuovo utente riceve una mail con <strong>&quot;Il tuo account per GOLDSMP è attivo&quot;</strong> e può
+            essere limitato a una singola istanza o abilitato su altre istanze con il pulsante <strong>+</strong>.
+          </p>
         </div>
       </div>
 
       <div className="card" style={{ marginBottom: 18 }}>
         <div className="card-header">
-          <span className="card-title">Nuovo Utente</span>
+          <span className="card-title">Nuovo Utente (Invia Email &quot;Il tuo account per GOLDSMP è attivo&quot;)</span>
         </div>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           <input placeholder="Username" value={username} onChange={(e) => setUsername(e.target.value)} />
-          <input placeholder="Email" value={email} onChange={(e) => setEmail(e.target.value)} />
+          <input
+            placeholder="Email proprietario"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            style={{ minWidth: 210 }}
+          />
           <input
             type="password"
             placeholder="Password"
@@ -195,26 +214,38 @@ export const UsersPage: React.FC<{ onNotify: (m: string) => void }> = ({ onNotif
             <option value="operator">Operator</option>
             <option value="viewer">Viewer (Solo Lettura)</option>
           </select>
+          <select value={scopeTarget} onChange={(e) => setScopeTarget(e.target.value)}>
+            <option value="*">Accesso: Intero Server (Tutte le istanze)</option>
+            {instances.map((inst) => (
+              <option key={inst.id} value={inst.id}>
+                Solo Istanza: {inst.name}
+              </option>
+            ))}
+          </select>
           <button
             className="btn btn-primary btn-sm"
             onClick={async () => {
               if (!username || !password) return;
               try {
+                const permissions =
+                  scopeTarget === '*'
+                    ? ['*']
+                    : [`instance:${scopeTarget}`, 'instances.read', 'instances.control', 'files.write'];
                 await api('/api/users', {
                   method: 'POST',
-                  body: JSON.stringify({ username, email, password, role }),
+                  body: JSON.stringify({ username, email, password, role, permissions }),
                 });
                 setUsername('');
                 setEmail('');
                 setPassword('');
-                onNotify('Utente creato');
+                onNotify('Utente creato e mail "Il tuo account per GOLDSMP è attivo" inviata!');
                 load();
               } catch (err: any) {
                 onNotify(err.message);
               }
             }}
           >
-            <Plus size={14} /> Crea Utente
+            <Plus size={14} /> Crea Utente & Invia Mail
           </button>
         </div>
       </div>
@@ -227,36 +258,102 @@ export const UsersPage: React.FC<{ onNotify: (m: string) => void }> = ({ onNotif
                 <th>Username</th>
                 <th>Email</th>
                 <th>Ruolo</th>
-                <th>Ultimo Accesso</th>
+                <th>Istanze Abilitate</th>
+                <th>Aggiungi Permesso Istanza (+)</th>
                 <th style={{ textAlign: 'right' }}>Azioni</th>
               </tr>
             </thead>
             <tbody>
-              {users.map((u) => (
-                <tr key={u.id}>
-                  <td style={{ fontWeight: 600 }}>{u.username}</td>
-                  <td>{u.email}</td>
-                  <td>
-                    <span className="status-badge status-running">{u.role}</span>
-                  </td>
-                  <td style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
-                    {u.last_login ? new Date(u.last_login).toLocaleString() : 'Mai'}
-                  </td>
-                  <td style={{ textAlign: 'right' }}>
-                    {u.username !== 'admin' && (
-                      <button
-                        className="btn btn-danger btn-sm"
-                        onClick={async () => {
-                          await api(`/api/users/${u.id}`, { method: 'DELETE' });
-                          load();
-                        }}
-                      >
-                        <Trash2 size={13} />
-                      </button>
-                    )}
-                  </td>
-                </tr>
-              ))}
+              {users.map((u) => {
+                const isGlobal =
+                  u.role === 'superadmin' || u.role === 'admin' || u.permissions.includes('*');
+                const allowedIds = u.permissions
+                  .filter((p) => p.startsWith('instance:'))
+                  .map((p) => p.replace('instance:', ''));
+                const unassigned = instances.filter((i) => !allowedIds.includes(i.id));
+
+                return (
+                  <tr key={u.id}>
+                    <td style={{ fontWeight: 600 }}>{u.username}</td>
+                    <td>{u.email}</td>
+                    <td>
+                      <span className="status-badge status-running">{u.role}</span>
+                    </td>
+                    <td>
+                      {isGlobal ? (
+                        <span className="status-badge status-running">Intero Server (*)</span>
+                      ) : allowedIds.length === 0 ? (
+                        <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>Nessuna</span>
+                      ) : (
+                        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                          {allowedIds.map((iid) => {
+                            const instName =
+                              instances.find((x) => x.id === iid)?.name || iid.slice(0, 8);
+                            return (
+                              <span
+                                key={iid}
+                                className="status-badge status-starting"
+                                style={{ textTransform: 'none' }}
+                              >
+                                {instName}
+                              </span>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </td>
+                    <td>
+                      {!isGlobal && unassigned.length > 0 ? (
+                        <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                          <select
+                            style={{ padding: '4px 8px', fontSize: 12 }}
+                            value={addInstPick[u.id] || unassigned[0].id}
+                            onChange={(e) =>
+                              setAddInstPick((prev) => ({ ...prev, [u.id]: e.target.value }))
+                            }
+                          >
+                            {unassigned.map((inst) => (
+                              <option key={inst.id} value={inst.id}>
+                                {inst.name}
+                              </option>
+                            ))}
+                          </select>
+                          <button
+                            className="btn btn-primary btn-sm"
+                            title="Aggiungi permesso per questa istanza"
+                            onClick={async () => {
+                              const targetId = addInstPick[u.id] || unassigned[0].id;
+                              await api(`/api/users/${u.id}/instances`, {
+                                method: 'POST',
+                                body: JSON.stringify({ instance_id: targetId }),
+                              });
+                              onNotify(`Permesso aggiunto (+) a ${u.username}`);
+                              load();
+                            }}
+                          >
+                            <Plus size={13} />
+                          </button>
+                        </div>
+                      ) : (
+                        <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>Tutte abilitate</span>
+                      )}
+                    </td>
+                    <td style={{ textAlign: 'right' }}>
+                      {u.username !== 'admin' && (
+                        <button
+                          className="btn btn-danger btn-sm"
+                          onClick={async () => {
+                            await api(`/api/users/${u.id}`, { method: 'DELETE' });
+                            load();
+                          }}
+                        >
+                          <Trash2 size={13} />
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>

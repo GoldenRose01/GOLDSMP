@@ -98,6 +98,11 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/auth/me", get(auth_routes::me))
         .route("/api/users", get(auth_routes::list_users).post(auth_routes::create_user))
         .route("/api/users/:id", delete(auth_routes::delete_user))
+        .route("/api/users/:id/instances", post(auth_routes::grant_user_instance))
+        .route(
+            "/api/users/:id/instances/:instance_id",
+            delete(auth_routes::revoke_user_instance),
+        )
         // System & Settings
         .route("/api/system/info", get(ops_routes::system_info))
         .route("/api/templates", get(ops_routes::list_templates))
@@ -128,6 +133,10 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/instances/:id/files/mkdir", post(file_routes::create_dir))
         .route("/api/instances/:id/files/rename", post(file_routes::rename_file))
         .route("/api/instances/:id/files/download-url", post(file_routes::download_from_url))
+        // Per-Instance FTP Access & Horizon MC 1-Click Installer
+        .route("/api/instances/:id/ftp", get(instance_routes::get_ftp_info))
+        .route("/api/instances/:id/ftp/rotate", post(instance_routes::rotate_ftp_password))
+        .route("/api/instances/:id/horizon/install", post(instance_routes::install_horizon_server))
         // Backups
         .route(
             "/api/instances/:id/backups",
@@ -170,6 +179,11 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/updater/config", put(ops_routes::updater_config))
         // Embedded SPA Frontend (with zero-downtime hot-swap override)
         .fallback(static_handler)
+        .layer(axum::extract::DefaultBodyLimit::max(10 * 1024 * 1024))
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            crate::security::security_middleware,
+        ))
         .layer(cors)
         .with_state(state)
 }

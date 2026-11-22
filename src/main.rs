@@ -4,10 +4,13 @@ mod auth;
 mod backups;
 mod db;
 mod files;
+mod ftp_server;
+mod mailer;
 mod models;
 mod modrinth;
 mod process_manager;
 mod scheduler;
+mod security;
 mod state;
 mod templates;
 mod updater;
@@ -15,6 +18,7 @@ mod webhooks;
 
 use crate::db::Database;
 use crate::process_manager::ProcessManager;
+use crate::security::SecurityGuard;
 use crate::state::AppState;
 use crate::updater::AutoUpdater;
 use chrono::Utc;
@@ -59,18 +63,26 @@ async fn main() {
 
     seed_demo_instance_if_empty(&db, &data_dir);
 
-    // Start background telemetry collector (5s resolution), task scheduler, and zero-downtime auto-updater
+    let ftp_port: u16 = std::env::var("GOLDSMP_FTP_PORT")
+        .ok()
+        .and_then(|p| p.parse().ok())
+        .unwrap_or(2121);
+
+    // Start background telemetry collector (5s resolution), task scheduler, zero-downtime auto-updater, and native FTP server
     analytics::spawn_telemetry_collector(db.clone(), pm.clone());
     scheduler::spawn_scheduler(db.clone(), pm.clone(), data_dir.clone(), http.clone());
     updater.spawn_background_loop();
+    ftp_server::spawn_ftp_server(db.clone(), pm.clone(), ftp_port);
 
     let state = AppState {
         db,
         pm,
         updater,
+        security: SecurityGuard::new(),
         data_dir,
         jwt_secret,
         http,
+        ftp_port,
     };
 
     let app = api::build_router(state);
