@@ -6,9 +6,10 @@ pub mod ops_routes;
 
 use crate::state::AppState;
 use axum::{
+    extract::State,
     http::{header, StatusCode, Uri},
     response::{IntoResponse, Response},
-    routing::{delete, get, post},
+    routing::{delete, get, post, put},
     Router,
 };
 use rust_embed::RustEmbed;
@@ -18,10 +19,46 @@ use tower_http::cors::{Any, CorsLayer};
 #[folder = "frontend/dist"]
 struct FrontendAssets;
 
-async fn static_handler(uri: Uri) -> Response {
+async fn static_handler(State(state): State<AppState>, uri: Uri) -> Response {
     let path = uri.path().trim_start_matches('/');
     let file_path = if path.is_empty() { "index.html" } else { path };
 
+    // 1. Check zero-downtime hot-swapped UI directory first (downloaded by AutoUpdater)
+    let override_dir = state.data_dir.join("ui-override");
+    if override_dir.exists() && !file_path.contains("..") {
+        let candidate = override_dir.join(file_path);
+        if candidate.is_file() {
+            if let Ok(bytes) = std::fs::read(&candidate) {
+                let mime = mime_guess::from_path(file_path).first_or_octet_stream();
+                return (
+                    StatusCode::OK,
+                    [
+                        (header::CONTENT_TYPE, mime.as_ref().to_string()),
+                        (header::CACHE_CONTROL, "no-cache".to_string()),
+                    ],
+                    bytes,
+                )
+                    .into_response();
+            }
+        }
+        // SPA fallback from hot-swapped UI
+        let override_index = override_dir.join("index.html");
+        if override_index.is_file() {
+            if let Ok(bytes) = std::fs::read(&override_index) {
+                return (
+                    StatusCode::OK,
+                    [
+                        (header::CONTENT_TYPE, "text/html; charset=utf-8".to_string()),
+                        (header::CACHE_CONTROL, "no-cache".to_string()),
+                    ],
+                    bytes,
+                )
+                    .into_response();
+            }
+        }
+    }
+
+    // 2. Fallback to embedded frontend compiled into the Rust binary
     if let Some(content) = FrontendAssets::get(file_path) {
         let mime = mime_guess::from_path(file_path).first_or_octet_stream();
         return (
@@ -32,7 +69,7 @@ async fn static_handler(uri: Uri) -> Response {
             .into_response();
     }
 
-    // SPA fallback to index.html
+    // SPA fallback to embedded index.html
     if let Some(index) = FrontendAssets::get("index.html") {
         return (
             StatusCode::OK,
@@ -126,7 +163,12 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/webhooks/:id", delete(ops_routes::delete_webhook))
         .route("/api/webhooks/:id/test", post(ops_routes::test_webhook))
         .route("/api/webhooks/incoming/:token", post(ops_routes::incoming_webhook))
-        // Embedded SPA Frontend
+        // Zero-Downtime Auto-Updater
+        .route("/api/updater/status", get(ops_routes::updater_status))
+        .route("/api/updater/check", post(ops_routes::updater_check))
+        .route("/api/updater/apply", post(ops_routes::updater_apply))
+        .route("/api/updater/config", put(ops_routes::updater_config))
+        // Embedded SPA Frontend (with zero-downtime hot-swap override)
         .fallback(static_handler)
         .layer(cors)
         .with_state(state)

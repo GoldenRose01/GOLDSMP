@@ -1,0 +1,43 @@
+name: Release GOLDSMP
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build-release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Build Frontend & Create Hot-Swap UI Archive
+        run: |
+          cd frontend
+          npm ci
+          npm run build
+          tar -czf ../frontend-dist.tar.gz -C dist .
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build Optimized Rust Binary
+        run: |
+          cargo build --release
+          cp target/release/goldsmp goldsmp-linux-x86_64
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            frontend-dist.tar.gz
+            goldsmp-linux-x86_64

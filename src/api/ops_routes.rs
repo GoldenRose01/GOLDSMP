@@ -456,3 +456,66 @@ pub async fn install_mod(
         "folder": folder
     })))
 }
+
+// --- Zero-Downtime Auto-Updater ---
+
+pub async fn updater_status(
+    State(state): State<AppState>,
+    _auth: AuthUser,
+) -> Json<crate::updater::UpdateStatus> {
+    Json(state.updater.get_status())
+}
+
+pub async fn updater_check(
+    State(state): State<AppState>,
+    auth: AuthUser,
+) -> Json<crate::updater::UpdateStatus> {
+    let auto_dl = state.updater.get_status().config.auto_download;
+    let st = state.updater.check_and_maybe_download(auto_dl).await;
+    state.db.log_audit(
+        &auth.0.username,
+        "UPDATER_CHECK",
+        &st.config.repo,
+        &format!("Stato: {} (latest: {:?})", st.state, st.latest_version),
+        "local",
+    );
+    Json(st)
+}
+
+pub async fn updater_apply(
+    State(state): State<AppState>,
+    auth: AuthUser,
+) -> Json<crate::updater::UpdateStatus> {
+    let st = state.updater.check_and_maybe_download(true).await;
+    state.db.log_audit(
+        &auth.0.username,
+        "UPDATER_APPLY",
+        &st.config.repo,
+        &format!("UI hot-swap: {}, binary staged: {}", st.ui_hot_updated, st.binary_staged),
+        "local",
+    );
+    Json(st)
+}
+
+pub async fn updater_config(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Json(cfg): Json<crate::updater::UpdaterConfig>,
+) -> Result<Json<crate::updater::UpdateStatus>, (StatusCode, String)> {
+    let st = state
+        .updater
+        .save_config(cfg)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    state.db.log_audit(
+        &auth.0.username,
+        "UPDATER_CONFIG",
+        &st.config.repo,
+        &format!(
+            "auto_check={}, auto_download={}, interval={}m",
+            st.config.auto_check, st.config.auto_download, st.config.check_interval_mins
+        ),
+        "local",
+    );
+    Ok(Json(st))
+}
+

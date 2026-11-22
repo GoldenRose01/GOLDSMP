@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { api, getToken, setToken } from './api/client';
-import { AppTemplate, HostSystemInfo, Instance, PanelSettings, User } from './types';
+import { AppTemplate, HostSystemInfo, Instance, PanelSettings, UpdateStatus, User } from './types';
 import { LoginView } from './components/LoginView';
 import { CreateInstanceModal } from './components/CreateInstanceModal';
 import { InstancesPage } from './pages/InstancesPage';
@@ -11,6 +11,7 @@ import {
   BarChart3,
   FileClock,
   LogOut,
+  RefreshCw,
   Server,
   Settings,
   Users,
@@ -27,6 +28,7 @@ export function App() {
   const [sysInfo, setSysInfo] = useState<HostSystemInfo | null>(null);
   const [instances, setInstances] = useState<Instance[]>([]);
   const [templates, setTemplates] = useState<AppTemplate[]>([]);
+  const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null);
 
   const [page, setPage] = useState<NavPage>('instances');
   const [selectedInstanceId, setSelectedInstanceId] = useState<string | null>(null);
@@ -61,12 +63,14 @@ export function App() {
   const refreshCore = async () => {
     if (!user) return;
     try {
-      const [insts, info] = await Promise.all([
+      const [insts, info, upd] = await Promise.all([
         api<Instance[]>('/api/instances'),
         api<HostSystemInfo>('/api/system/info'),
+        api<UpdateStatus>('/api/updater/status'),
       ]);
       setInstances(insts);
       setSysInfo(info);
+      setUpdateStatus(upd);
     } catch {}
   };
 
@@ -99,6 +103,9 @@ export function App() {
     setToken(null);
     setUser(null);
   };
+
+  const showRefreshBanner =
+    updateStatus && (updateStatus.ui_hot_updated || updateStatus.state === 'ready_refresh');
 
   return (
     <div className="app-shell">
@@ -201,6 +208,34 @@ export function App() {
             </span>
           </div>
         </header>
+
+        {showRefreshBanner && (
+          <div
+            style={{
+              background: 'var(--accent-soft)',
+              borderBottom: '1px solid var(--accent)',
+              padding: '10px 24px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: 12,
+              flexWrap: 'wrap',
+            }}
+          >
+            <div style={{ fontSize: 13, color: 'var(--text-primary)' }}>
+              <strong>Aggiornamento v{updateStatus.latest_version || updateStatus.active_ui_version} scaricato automaticamente!</strong>{' '}
+              <span style={{ color: 'var(--text-secondary)' }}>
+                Nessun server è stato interrotto: premi <strong>Aggiorna Pagina</strong> per caricare la nuova versione.
+              </span>
+            </div>
+            <button
+              className="btn btn-primary btn-sm"
+              onClick={() => window.location.reload()}
+            >
+              <RefreshCw size={14} /> Aggiorna Pagina (F5)
+            </button>
+          </div>
+        )}
 
         <main className="content-scroll">
           {selectedInstanceId ? (

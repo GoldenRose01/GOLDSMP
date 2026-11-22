@@ -4,10 +4,12 @@ import {
   AuditLogEntry,
   HostSystemInfo,
   PanelSettings,
+  UpdateStatus,
+  UpdaterConfig,
   User,
   WebhookConfig,
 } from '../types';
-import { Plus, Save, Send, Trash2 } from 'lucide-react';
+import { DownloadCloud, Plus, RefreshCw, Save, Send, Trash2 } from 'lucide-react';
 
 // --- WEBHOOKS PAGE ---
 export const WebhooksPage: React.FC<{
@@ -321,10 +323,22 @@ export const SettingsPage: React.FC<{
   onNotify: (m: string) => void;
 }> = ({ settings, sysInfo, onSaved, onNotify }) => {
   const [form, setForm] = useState<PanelSettings | null>(settings);
+  const [updStatus, setUpdStatus] = useState<UpdateStatus | null>(null);
+  const [updCfg, setUpdCfg] = useState<UpdaterConfig | null>(null);
+  const [checking, setChecking] = useState(false);
 
   useEffect(() => {
     if (settings) setForm(settings);
   }, [settings]);
+
+  useEffect(() => {
+    api<UpdateStatus>('/api/updater/status')
+      .then((s) => {
+        setUpdStatus(s);
+        setUpdCfg(s.config);
+      })
+      .catch(() => {});
+  }, []);
 
   if (!form) return null;
 
@@ -334,21 +348,176 @@ export const SettingsPage: React.FC<{
       method: 'PUT',
       body: JSON.stringify(form),
     });
+    if (updCfg) {
+      const u = await api<UpdateStatus>('/api/updater/config', {
+        method: 'PUT',
+        body: JSON.stringify(updCfg),
+      });
+      setUpdStatus(u);
+    }
     onSaved(updated);
-    onNotify('Impostazioni salvate');
+    onNotify('Impostazioni e configurazione aggiornamenti salvate');
+  };
+
+  const checkUpdates = async (forceApply = false) => {
+    setChecking(true);
+    try {
+      const st = await api<UpdateStatus>(
+        forceApply ? '/api/updater/apply' : '/api/updater/check',
+        { method: 'POST' }
+      );
+      setUpdStatus(st);
+      if (st.state === 'ready_refresh') {
+        onNotify('Aggiornamento scaricato! Premi Aggiorna Pagina (F5), nessun server interrotto.');
+      } else if (st.state === 'up_to_date') {
+        onNotify(`GOLDSMP è già aggiornato (v${st.active_ui_version})`);
+      } else if (st.error) {
+        onNotify(st.error);
+      }
+    } finally {
+      setChecking(false);
+    }
   };
 
   return (
     <form onSubmit={save} style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
       <div className="page-header" style={{ marginBottom: 4 }}>
         <div>
-          <h1>Impostazioni, Branding & OIDC SSO</h1>
-          <p>Personalizzazione white-label, autenticazione OIDC e retention dei dati telemetrici.</p>
+          <h1>Impostazioni, Auto-Updater & OIDC SSO</h1>
+          <p>Aggiornamenti automatici senza interruzioni, branding white-label e autenticazione OIDC.</p>
         </div>
         <button type="submit" className="btn btn-primary">
           <Save size={15} /> Salva Tutto
         </button>
       </div>
+
+      {/* Zero-Downtime Auto-Updater Card */}
+      {updStatus && updCfg && (
+        <div className="card">
+          <div className="card-header" style={{ flexWrap: 'wrap' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <DownloadCloud size={18} color="var(--accent)" />
+              <span className="card-title">Aggiornamenti Automatici (Zero-Downtime)</span>
+              <span
+                className={`status-badge ${
+                  updStatus.state === 'ready_refresh'
+                    ? 'status-starting'
+                    : updStatus.state === 'error'
+                    ? 'status-crashed'
+                    : 'status-running'
+                }`}
+              >
+                <span className="status-dot" />
+                {updStatus.state === 'ready_refresh'
+                  ? 'Pronto — Premi F5'
+                  : updStatus.state === 'up_to_date'
+                  ? 'Aggiornato'
+                  : updStatus.state}
+              </span>
+            </div>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              <button
+                type="button"
+                className="btn btn-secondary btn-sm"
+                disabled={checking}
+                onClick={() => checkUpdates(false)}
+              >
+                <RefreshCw size={13} /> {checking ? 'Controllo...' : 'Controlla Ora'}
+              </button>
+              {updStatus.update_available && (
+                <button
+                  type="button"
+                  className="btn btn-primary btn-sm"
+                  disabled={checking}
+                  onClick={() => checkUpdates(true)}
+                >
+                  <DownloadCloud size={13} /> Scarica & Attiva
+                </button>
+              )}
+              {(updStatus.ui_hot_updated || updStatus.state === 'ready_refresh') && (
+                <button
+                  type="button"
+                  className="btn btn-success btn-sm"
+                  onClick={() => window.location.reload()}
+                >
+                  <RefreshCw size={13} /> Aggiorna Pagina (F5)
+                </button>
+              )}
+            </div>
+          </div>
+
+          <p style={{ fontSize: 12.5, color: 'var(--text-secondary)', marginBottom: 14 }}>
+            GOLDSMP controlla automaticamente le release GitHub, scarica il nuovo bundle UI a caldo e prepara il binario su disco in modo atomico: i server di gioco in esecuzione non vengono mai interrotti e basta premere <strong>Refresh (F5)</strong> nel browser.
+          </p>
+
+          <div className="grid-4" style={{ marginBottom: 14, fontFamily: 'var(--font-mono)', fontSize: 12.5 }}>
+            <div>
+              <div style={{ color: 'var(--text-muted)' }}>Versione Binario</div>
+              <div>v{updStatus.current_version}</div>
+            </div>
+            <div>
+              <div style={{ color: 'var(--text-muted)' }}>Versione UI Attiva</div>
+              <div style={{ color: 'var(--accent)' }}>v{updStatus.active_ui_version}</div>
+            </div>
+            <div>
+              <div style={{ color: 'var(--text-muted)' }}>Ultima su GitHub</div>
+              <div>{updStatus.latest_version ? `v${updStatus.latest_version}` : '--'}</div>
+            </div>
+            <div>
+              <div style={{ color: 'var(--text-muted)' }}>Ultimo Controllo</div>
+              <div>
+                {updStatus.last_checked
+                  ? new Date(updStatus.last_checked).toLocaleTimeString()
+                  : 'In attesa'}
+              </div>
+            </div>
+          </div>
+
+          <div className="grid-3">
+            <div className="field">
+              <label>Repository GitHub (owner/repo)</label>
+              <input
+                value={updCfg.repo}
+                onChange={(e) => setUpdCfg({ ...updCfg, repo: e.target.value })}
+              />
+            </div>
+            <div className="field">
+              <label>Intervallo Controllo (minuti)</label>
+              <input
+                type="number"
+                min={5}
+                value={updCfg.check_interval_mins}
+                onChange={(e) =>
+                  setUpdCfg({ ...updCfg, check_interval_mins: Number(e.target.value) })
+                }
+              />
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: 8 }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13 }}>
+                <input
+                  type="checkbox"
+                  checked={updCfg.auto_check}
+                  onChange={(e) => setUpdCfg({ ...updCfg, auto_check: e.target.checked })}
+                />
+                Controllo automatico in background
+              </label>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13 }}>
+                <input
+                  type="checkbox"
+                  checked={updCfg.auto_download}
+                  onChange={(e) => setUpdCfg({ ...updCfg, auto_download: e.target.checked })}
+                />
+                Scarica e applica UI automaticamente (solo F5)
+              </label>
+            </div>
+          </div>
+          {updStatus.error && (
+            <div style={{ marginTop: 10, color: 'var(--danger)', fontSize: 12.5 }}>
+              {updStatus.error}
+            </div>
+          )}
+        </div>
+      )}
 
       <div className="grid-2">
         <div className="card">

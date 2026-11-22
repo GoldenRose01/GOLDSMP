@@ -1,5 +1,6 @@
 use crate::db::Database;
 use crate::process_manager::ProcessManager;
+use crate::updater::AutoUpdater;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -7,6 +8,7 @@ use std::sync::Arc;
 pub struct AppState {
     pub db: Database,
     pub pm: Arc<ProcessManager>,
+    pub updater: Arc<AutoUpdater>,
     pub data_dir: PathBuf,
     pub jwt_secret: String,
     pub http: reqwest::Client,

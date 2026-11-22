@@ -226,3 +226,26 @@ export interface ModrinthHit {
   project_type: string;
   categories: string[];
 }
+
+export interface UpdaterConfig {
+  repo: string;
+  auto_check: boolean;
+  auto_download: boolean;
+  check_interval_mins: number;
+}
+
+export interface UpdateStatus {
+  current_version: string;
+  latest_version?: string;
+  active_ui_version: string;
+  update_available: boolean;
+  ui_hot_updated: boolean;
+  binary_staged: boolean;
+  state: 'idle' | 'checking' | 'downloading' | 'ready_refresh' | 'up_to_date' | 'error';
+  release_notes: string;
+  release_url: string;
+  last_checked?: string;
+  error?: string;
+  config: UpdaterConfig;
+}
+
