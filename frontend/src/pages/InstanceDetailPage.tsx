@@ -95,7 +95,13 @@ export const InstanceDetailPage: React.FC<InstanceDetailPageProps> = ({
   const [cfgExec, setCfgExec] = useState('');
   const [cfgArgs, setCfgArgs] = useState('');
   const [cfgMaxMem, setCfgMaxMem] = useState(2048);
+  const [cfgMaxPlayers, setCfgMaxPlayers] = useState(30);
+  const [cfgAutoStart, setCfgAutoStart] = useState(false);
+  const [cfgAutoRestart, setCfgAutoRestart] = useState(true);
+  const [cfgEnvText, setCfgEnvText] = useState('');
   const [cfgSettings, setCfgSettings] = useState<Record<string, string>>({});
+  const [cfgCat, setCfgCat] = useState<string>('all');
+  const [cfgSearch, setCfgSearch] = useState<string>('');
 
   // Files state
   const [curPath, setCurPath] = useState('');
@@ -157,6 +163,14 @@ export const InstanceDetailPage: React.FC<InstanceDetailPageProps> = ({
       setCfgExec(inst.executable);
       setCfgArgs(inst.args.join(' '));
       setCfgMaxMem(inst.max_memory_mb);
+      setCfgMaxPlayers(inst.max_players);
+      setCfgAutoStart(inst.auto_start);
+      setCfgAutoRestart(inst.auto_restart);
+      setCfgEnvText(
+        Object.entries(inst.env_vars || {})
+          .map(([k, v]) => `${k}=${v}`)
+          .join('\n')
+      );
       setCfgSettings(inst.settings || {});
     }
   }, [inst]);
@@ -273,6 +287,15 @@ export const InstanceDetailPage: React.FC<InstanceDetailPageProps> = ({
   const saveConfig = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
+      const env_vars: Record<string, string> = {};
+      for (const line of cfgEnvText.split('\n')) {
+        const trimmed = line.trim();
+        if (!trimmed || trimmed.startsWith('#')) continue;
+        const eq = trimmed.indexOf('=');
+        if (eq > 0) {
+          env_vars[trimmed.slice(0, eq).trim()] = trimmed.slice(eq + 1).trim();
+        }
+      }
       await api(`/api/instances/${instanceId}`, {
         method: 'PUT',
         body: JSON.stringify({
@@ -281,10 +304,14 @@ export const InstanceDetailPage: React.FC<InstanceDetailPageProps> = ({
           executable: cfgExec,
           args: cfgArgs.trim() ? cfgArgs.trim().split(/\s+/) : [],
           max_memory_mb: Number(cfgMaxMem),
+          max_players: Number(cfgMaxPlayers),
+          auto_start: cfgAutoStart,
+          auto_restart: cfgAutoRestart,
+          env_vars,
           settings: cfgSettings,
         }),
       });
-      onNotify('Configurazione salvata e sincronizzata su disco');
+      onNotify('Configurazione completa salvata e sincronizzata su disco');
       loadInstance();
       onRefreshInstances();
     } catch (err: any) {
@@ -520,131 +547,285 @@ export const InstanceDetailPage: React.FC<InstanceDetailPageProps> = ({
 
       {/* TAB 2: CONSOLE */}
       {tab === 'console' && (
-        <div className="console-box">
-          <div className="console-output">
-            {lines.length === 0 && (
-              <div style={{ color: 'var(--text-muted)' }}>
-                Console connessa via WebSocket. Avvia l'istanza per visualizzare l'output in tempo reale...
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <div className="card" style={{ padding: '12px 16px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap' }}>
+              <span style={{ fontSize: 12, fontFamily: 'var(--font-display)', textTransform: 'uppercase', letterSpacing: '0.07em', color: 'var(--accent)' }}>
+                Comandi Rapidi Console:
+              </span>
+              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                {[
+                  { label: 'Stato / TPS', cmd: 'status' },
+                  { label: 'Help', cmd: 'help' },
+                  { label: 'Save-All', cmd: 'save-all' },
+                  { label: 'Whitelist On', cmd: 'whitelist on' },
+                  { label: 'Whitelist Off', cmd: 'whitelist off' },
+                  { label: 'Simula Join Player', cmd: 'simjoin StarkGold 79.12.45.8' },
+                  { label: 'Simula Leave', cmd: 'simleave StarkGold' },
+                ].map((q) => (
+                  <button
+                    key={q.cmd}
+                    type="button"
+                    className="btn btn-secondary btn-sm"
+                    disabled={!isRunning}
+                    onClick={async () => {
+                      if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+                        wsRef.current.send(q.cmd);
+                      } else {
+                        await api(`/api/instances/${instanceId}/command`, {
+                          method: 'POST',
+                          body: JSON.stringify({ command: q.cmd }),
+                        });
+                      }
+                    }}
+                  >
+                    {q.label}
+                  </button>
+                ))}
               </div>
-            )}
-            {lines.map((l, idx) => (
-              <div key={idx} className="console-line">
-                <span className="console-ts">[{l.timestamp}]</span>
-                <span className={`console-stream-${l.stream}`}>{l.message}</span>
-              </div>
-            ))}
-            <div ref={consoleEndRef} />
+            </div>
           </div>
-          <form className="console-input-bar" onSubmit={sendConsoleCmd}>
-            <input
-              placeholder={
-                isRunning
-                  ? 'Invia comando a stdin (es. help, status, say Ciao, simjoin Alex 79.12.45.8)...'
-                  : 'Avvia il server per inviare comandi...'
-              }
-              value={cmdInput}
-              onChange={(e) => setCmdInput(e.target.value)}
-              disabled={!isRunning}
-            />
-            <button type="submit" className="btn btn-primary" disabled={!isRunning}>
-              <Send size={14} /> Invia
-            </button>
-          </form>
+
+          <div className="console-box">
+            <div className="console-output">
+              {lines.length === 0 && (
+                <div style={{ color: 'var(--text-muted)' }}>
+                  Console connessa via WebSocket. Avvia l&apos;istanza per visualizzare l&apos;output in tempo reale...
+                </div>
+              )}
+              {lines.map((l, idx) => (
+                <div key={idx} className="console-line">
+                  <span className="console-ts">[{l.timestamp}]</span>
+                  <span className={`console-stream-${l.stream}`}>{l.message}</span>
+                </div>
+              ))}
+              <div ref={consoleEndRef} />
+            </div>
+            <form className="console-input-bar" onSubmit={sendConsoleCmd}>
+              <input
+                placeholder={
+                  isRunning
+                    ? 'Invia comando a stdin (es. help, status, say Ciao, op <player>, whitelist add <player>)...'
+                    : 'Avvia il server per inviare comandi...'
+                }
+                value={cmdInput}
+                onChange={(e) => setCmdInput(e.target.value)}
+                disabled={!isRunning}
+              />
+              <button type="submit" className="btn btn-primary" disabled={!isRunning}>
+                <Send size={14} /> Invia
+              </button>
+            </form>
+          </div>
         </div>
       )}
 
-      {/* TAB 3: CONFIGURATION */}
+      {/* TAB 3: COMPLETE CONFIGURATION MENU */}
       {tab === 'config' && (
         <form onSubmit={saveConfig} style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
           <div className="card">
-            <div className="card-header">
-              <span className="card-title">Parametri di Avvio & Processo Nativo</span>
-              <button type="submit" className="btn btn-primary btn-sm">
-                <Save size={14} /> Salva Configurazione
+            <div className="card-header" style={{ flexWrap: 'wrap' }}>
+              <span className="card-title">Parametri di Avvio, Risorse, Lifecycle & Ambiente</span>
+              <button type="submit" className="btn btn-primary">
+                <Save size={14} /> Salva & Applica Configurazione
               </button>
             </div>
-            <div className="grid-2">
+            <div className="grid-3" style={{ marginBottom: 14 }}>
               <div className="field">
                 <label>Nome Istanza</label>
                 <input value={cfgName} onChange={(e) => setCfgName(e.target.value)} />
               </div>
               <div className="field">
-                <label>Porta</label>
+                <label>Porta Principale</label>
                 <input type="number" value={cfgPort} onChange={(e) => setCfgPort(Number(e.target.value))} />
               </div>
               <div className="field">
-                <label>Eseguibile</label>
-                <input value={cfgExec} onChange={(e) => setCfgExec(e.target.value)} />
+                <label>Slot Giocatori Massimi</label>
+                <input
+                  type="number"
+                  value={cfgMaxPlayers}
+                  onChange={(e) => setCfgMaxPlayers(Number(e.target.value))}
+                />
               </div>
               <div className="field">
-                <label>Argomenti (usa {'{PORT}'}, {'{MAX_MEMORY}'}, {'{MAX_PLAYERS}'})</label>
-                <input value={cfgArgs} onChange={(e) => setCfgArgs(e.target.value)} />
-              </div>
-              <div className="field">
-                <label>RAM Massima (MB)</label>
+                <label>RAM Massima Allocata (MB)</label>
                 <input type="number" value={cfgMaxMem} onChange={(e) => setCfgMaxMem(Number(e.target.value))} />
+              </div>
+              <div className="field">
+                <label>Eseguibile Nativo</label>
+                <input value={cfgExec} onChange={(e) => setCfgExec(e.target.value)} />
               </div>
               <div className="field">
                 <label>Directory di Lavoro</label>
                 <input value={inst.work_dir} disabled />
               </div>
             </div>
-          </div>
 
-          {tpl && tpl.settings_schema.length > 0 && (
-            <div className="card">
-              <div className="card-header">
-                <span className="card-title">Editor Impostazioni Grafico ({tpl.name})</span>
-              </div>
-              <div className="grid-2">
-                {tpl.settings_schema.map((field) => (
-                  <div key={field.key} className="field">
-                    <label>{field.label}</label>
-                    {field.field_type === 'select' && field.options ? (
-                      <select
-                        value={cfgSettings[field.key] ?? field.default_value}
-                        onChange={(e) =>
-                          setCfgSettings((s) => ({ ...s, [field.key]: e.target.value }))
-                        }
-                      >
-                        {field.options.map((opt) => (
-                          <option key={opt} value={opt}>
-                            {opt}
-                          </option>
-                        ))}
-                      </select>
-                    ) : field.field_type === 'boolean' ? (
-                      <select
-                        value={cfgSettings[field.key] ?? field.default_value}
-                        onChange={(e) =>
-                          setCfgSettings((s) => ({ ...s, [field.key]: e.target.value }))
-                        }
-                      >
-                        <option value="true">Attivo (true)</option>
-                        <option value="false">Disattivo (false)</option>
-                      </select>
-                    ) : (
-                      <input
-                        type={field.field_type === 'number' ? 'number' : 'text'}
-                        value={cfgSettings[field.key] ?? field.default_value}
-                        onChange={(e) =>
-                          setCfgSettings((s) => ({ ...s, [field.key]: e.target.value }))
-                        }
-                      />
-                    )}
-                    <span className="field-hint">{field.description}</span>
+            <div className="grid-2" style={{ marginBottom: 14 }}>
+              <div className="field">
+                <label>Argomenti Riga di Comando (usa {'{PORT}'}, {'{MAX_MEMORY}'}, {'{MAX_PLAYERS}'})</label>
+                <input value={cfgArgs} onChange={(e) => setCfgArgs(e.target.value)} />
+                {inst.template_id === 'minecraft-java' && (
+                  <div style={{ display: 'flex', gap: 6, marginTop: 4, flexWrap: 'wrap' }}>
+                    <button
+                      type="button"
+                      className="btn btn-secondary btn-sm"
+                      onClick={() =>
+                        setCfgArgs(
+                          '-Xms1024M -Xmx{MAX_MEMORY}M -XX:+UseG1GC -XX:+ParallelRefProcEnabled -XX:MaxGCPauseMillis=200 -XX:+UnlockExperimentalVMOptions -XX:+DisableExplicitGC -XX:G1NewSizePercent=30 -XX:G1MaxNewSizePercent=40 -XX:G1HeapRegionSize=8M -jar server.jar nogui'
+                        )
+                      }
+                    >
+                      Applica Preset JVM Aikar&apos;s Flags
+                    </button>
                   </div>
-                ))}
+                )}
+              </div>
+              <div className="field">
+                <label>Variabili d&apos;Ambiente (KEY=VALUE, una per riga)</label>
+                <textarea
+                  rows={2}
+                  style={{ fontFamily: 'var(--font-mono)', fontSize: 12 }}
+                  placeholder="RUST_LOG=info&#10;TZ=Europe/Rome"
+                  value={cfgEnvText}
+                  onChange={(e) => setCfgEnvText(e.target.value)}
+                />
               </div>
             </div>
-          )}
+
+            <div style={{ display: 'flex', gap: 22, flexWrap: 'wrap' }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13 }}>
+                <input
+                  type="checkbox"
+                  checked={cfgAutoRestart}
+                  onChange={(e) => setCfgAutoRestart(e.target.checked)}
+                />
+                Watchdog Auto-Restart in caso di crash
+              </label>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13 }}>
+                <input
+                  type="checkbox"
+                  checked={cfgAutoStart}
+                  onChange={(e) => setCfgAutoStart(e.target.checked)}
+                />
+                Auto-Start all&apos;avvio del nodo GOLDSMP
+              </label>
+            </div>
+          </div>
+
+          {tpl && tpl.settings_schema.length > 0 && (() => {
+            const cats = Array.from(new Set(tpl.settings_schema.map((s) => s.category)));
+            const filteredSchema = tpl.settings_schema.filter((f) => {
+              const matchCat = cfgCat === 'all' || f.category === cfgCat;
+              const q = cfgSearch.toLowerCase();
+              const matchQ =
+                !q ||
+                f.label.toLowerCase().includes(q) ||
+                f.key.toLowerCase().includes(q) ||
+                f.description.toLowerCase().includes(q);
+              return matchCat && matchQ;
+            });
+
+            return (
+              <div className="card">
+                <div className="card-header" style={{ flexWrap: 'wrap', marginBottom: 14 }}>
+                  <div>
+                    <span className="card-title">
+                      Controllo Completo Impostazioni — {tpl.name} ({tpl.settings_schema.length} opzioni)
+                    </span>
+                    <p style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 2 }}>
+                      Ogni modifica viene scritta automaticamente nel file di configurazione nativo del server.
+                    </p>
+                  </div>
+                  <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                    <input
+                      placeholder="Filtra opzione (es. view, port, rcon, pvp)..."
+                      value={cfgSearch}
+                      onChange={(e) => setCfgSearch(e.target.value)}
+                      style={{ minWidth: 230 }}
+                    />
+                    <button type="submit" className="btn btn-primary btn-sm">
+                      <Save size={14} /> Salva ({filteredSchema.length})
+                    </button>
+                  </div>
+                </div>
+
+                {/* Category Sub-Tabs */}
+                <div className="pill-group" style={{ marginBottom: 16, flexWrap: 'wrap' }}>
+                  <button
+                    type="button"
+                    className={`pill-btn ${cfgCat === 'all' ? 'active' : ''}`}
+                    onClick={() => setCfgCat('all')}
+                  >
+                    Tutte ({tpl.settings_schema.length})
+                  </button>
+                  {cats.map((c) => (
+                    <button
+                      type="button"
+                      key={c}
+                      className={`pill-btn ${cfgCat === c ? 'active' : ''}`}
+                      onClick={() => setCfgCat(c)}
+                    >
+                      {c} ({tpl.settings_schema.filter((s) => s.category === c).length})
+                    </button>
+                  ))}
+                </div>
+
+                <div className="grid-3">
+                  {filteredSchema.map((field) => (
+                    <div key={field.key} className="field">
+                      <label style={{ display: 'flex', justifyContent: 'space-between', gap: 6 }}>
+                        <span>{field.label}</span>
+                        <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10.5, color: 'var(--text-muted)' }}>
+                          {field.key}
+                        </span>
+                      </label>
+                      {field.field_type === 'select' && field.options ? (
+                        <select
+                          value={cfgSettings[field.key] ?? field.default_value}
+                          onChange={(e) =>
+                            setCfgSettings((s) => ({ ...s, [field.key]: e.target.value }))
+                          }
+                        >
+                          {field.options.map((opt) => (
+                            <option key={opt} value={opt}>
+                              {opt}
+                            </option>
+                          ))}
+                        </select>
+                      ) : field.field_type === 'boolean' ? (
+                        <select
+                          value={cfgSettings[field.key] ?? field.default_value}
+                          onChange={(e) =>
+                            setCfgSettings((s) => ({ ...s, [field.key]: e.target.value }))
+                          }
+                        >
+                          <option value="true">Attivo (true)</option>
+                          <option value="false">Disattivo (false)</option>
+                        </select>
+                      ) : (
+                        <input
+                          type={field.field_type === 'number' ? 'number' : 'text'}
+                          value={cfgSettings[field.key] ?? field.default_value}
+                          onChange={(e) =>
+                            setCfgSettings((s) => ({ ...s, [field.key]: e.target.value }))
+                          }
+                        />
+                      )}
+                      <span className="field-hint">{field.description}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            );
+          })()}
 
           <div className="card" style={{ borderColor: 'rgba(239, 68, 68, 0.25)' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <div>
                 <div style={{ fontWeight: 600, color: 'var(--danger)' }}>Zona Pericolosa</div>
                 <div style={{ fontSize: 12.5, color: 'var(--text-secondary)' }}>
-                  Rimuove questa istanza dal pannello (arresta il processo se attivo).
+                  Rimuove questa istanza dal pannello (richiede tripla conferma con digitazione di CONFERMA).
                 </div>
               </div>
               <button type="button" className="btn btn-danger" onClick={openDeleteModal}>

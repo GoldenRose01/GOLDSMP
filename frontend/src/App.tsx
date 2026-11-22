@@ -11,6 +11,7 @@ import {
   BarChart3,
   FileClock,
   LogOut,
+  Plus,
   RefreshCw,
   Server,
   Settings,
@@ -122,6 +123,24 @@ export function App() {
         </div>
 
         <nav className="sidebar-nav">
+          <div style={{ padding: '2px 4px 10px' }}>
+            <button
+              type="button"
+              className="btn btn-primary"
+              onClick={() => setShowCreateModal(true)}
+              style={{
+                width: '100%',
+                padding: '10px 12px',
+                fontSize: 13.5,
+                boxShadow: '0 0 18px rgba(245, 185, 50, 0.35)',
+                border: '1px solid rgba(255, 240, 179, 0.55)',
+              }}
+            >
+              <Plus size={16} strokeWidth={2.5} />
+              <span>Crea Nuova Istanza</span>
+            </button>
+          </div>
+
           <div className="nav-section-label">Gestione</div>
           {navItems.slice(0, 3).map((item) => {
             const Icon = item.icon;
@@ -183,6 +202,17 @@ export function App() {
           </div>
 
           <div className="topbar-right">
+            <button
+              type="button"
+              className="btn btn-primary btn-sm"
+              onClick={() => setShowCreateModal(true)}
+              style={{
+                padding: '6px 14px',
+                boxShadow: '0 0 14px rgba(245, 185, 50, 0.35)',
+              }}
+            >
+              <Plus size={14} strokeWidth={2.5} /> Nuova Istanza
+            </button>
             {sysInfo && (
               <div className="host-chip">
                 <span>

@@ -539,34 +539,71 @@ fn sync_settings_to_disk(
         let toml_content = format!(
             r#"# Horizon MC Server (Rust 26.3) — Generato da GOLDSMP
 [network]
-bind = "0.0.0.0"
+bind = "{}"
 port = {}
+compression_threshold = {}
+proxy_protocol = "{}"
 online_mode = {}
+enforce_secure_profile = {}
 
 [server]
 motd = "{}"
 max_players = {}
 whitelist = {}
+control_api_enabled = {}
 
 [world]
 name = "{}"
+seed = "{}"
+level_type = "{}"
+generate_structures = {}
+allow_nether = {}
+allow_end = {}
+spawn_protection = {}
 gamemode = "{}"
 difficulty = "{}"
+hardcore = {}
 pvp = {}
+allow_flight = {}
+
+[engine]
 view_distance = {}
+distant_terrain_chunks = {}
 simulation_distance = {}
+worker_threads = {}
+autosave_interval_secs = {}
+hzperf_profiler = {}
+native_hmod_loader = {}
 "#,
+            get("bind_address", "0.0.0.0"),
             get("port", "25565"),
+            get("network_compression_threshold", "256"),
+            get("proxy_protocol", "none"),
             get("online_mode", "true"),
-            get("motd", "GOLDSMP x Horizon MC (Rust)").replace('"', "'"),
-            get("max_players", "30"),
+            get("enforce_secure_profile", "false"),
+            get("motd", "GOLDSMP x Horizon MC (Rust 26.3)").replace('"', "'"),
+            get("max_players", "50"),
             get("whitelist", "false"),
+            get("control_api_enabled", "true"),
             get("world_name", "world"),
+            get("level_seed", ""),
+            get("level_type", "minecraft:normal"),
+            get("generate_structures", "true"),
+            get("allow_nether", "true"),
+            get("allow_end", "true"),
+            get("spawn_protection", "16"),
             get("gamemode", "survival"),
             get("difficulty", "normal"),
+            get("hardcore", "false"),
             get("pvp", "true"),
+            get("allow_flight", "true"),
             get("view_distance", "16"),
+            get("horizon_distant_terrain_chunks", "256"),
             get("simulation_distance", "10"),
+            get("worker_threads", "0"),
+            get("autosave_interval_secs", "300"),
+            get("hzperf_profiler", "true"),
+            get("native_hmod_loader", "true"),
         );
         let _ = std::fs::write(work_dir.join("server.toml"), toml_content);
     } else if template_id.starts_with("minecraft") {

@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { api, formatDuration } from '../api/client';
 import { HostSystemInfo, Instance } from '../types';
+import { getGameArt } from '../utils/gameArtwork';
 import {
   Boxes,
   Cpu,
@@ -9,8 +10,10 @@ import {
   Plus,
   Search,
   Settings2,
+  Sparkles,
   Square,
   Users,
+  Zap,
 } from 'lucide-react';
 
 interface InstancesPageProps {
@@ -61,14 +64,26 @@ export const InstancesPage: React.FC<InstancesPageProps> = ({
 
   return (
     <div>
+      {/* High-Visibility Header with Prominent Create Button */}
       <div className="page-header">
         <div>
-          <h1>Istanze & Server</h1>
-          <p>Gestione nativa ad alte prestazioni • Nessun limite di licenza sulle istanze</p>
+          <h1>Istanze & Server Dedicati</h1>
+          <p>
+            Gestione nativa in Rust • Horizon MC, Minecraft, SteamCMD & App con controllo completo
+          </p>
         </div>
-        <button className="btn btn-primary" onClick={onOpenCreate}>
-          <Plus size={16} />
-          Crea Istanza
+        <button
+          className="btn btn-primary"
+          onClick={onOpenCreate}
+          style={{
+            padding: '11px 22px',
+            fontSize: 14,
+            boxShadow: '0 0 24px rgba(245, 185, 50, 0.45)',
+            border: '1px solid rgba(255, 240, 179, 0.65)',
+          }}
+        >
+          <Sparkles size={16} />
+          + Crea Nuova Istanza
         </button>
       </div>
 
@@ -84,9 +99,7 @@ export const InstancesPage: React.FC<InstancesPageProps> = ({
           <div className="kpi-value" style={{ color: 'var(--accent)' }}>
             {sysInfo ? `${sysInfo.cpu_usage_percent.toFixed(1)}%` : '--'}
           </div>
-          <div className="kpi-label">
-            CPU Host ({sysInfo?.cpu_cores || 0} core)
-          </div>
+          <div className="kpi-label">CPU Host ({sysInfo?.cpu_cores || 0} core)</div>
         </div>
         <div className="card">
           <div className="kpi-value">
@@ -99,7 +112,7 @@ export const InstancesPage: React.FC<InstancesPageProps> = ({
           </div>
         </div>
         <div className="card">
-          <div className="kpi-value" style={{ color: 'var(--success)' }}>
+          <div className="kpi-value" style={{ color: 'var(--arc-cyan)' }}>
             {totalPlayers}
           </div>
           <div className="kpi-label">Giocatori Online Totali</div>
@@ -155,146 +168,239 @@ export const InstancesPage: React.FC<InstancesPageProps> = ({
         </div>
       </div>
 
-      {/* Instances Grid */}
-      {filtered.length === 0 ? (
-        <div className="card" style={{ textAlign: 'center', padding: 48 }}>
-          <p style={{ color: 'var(--text-secondary)', marginBottom: 14 }}>
-            Nessuna istanza trovata. Crea la tua prima istanza Minecraft, SteamCMD o Node/Python!
-          </p>
-          <button className="btn btn-primary" onClick={onOpenCreate}>
-            <Plus size={16} /> Crea Prima Istanza
-          </button>
-        </div>
-      ) : (
-        <div className="grid-3">
-          {filtered.map((inst) => {
-            const memPct = inst.max_memory_mb
-              ? Math.min(100, (inst.memory_mb / inst.max_memory_mb) * 100)
-              : 0;
-            const isRunning = inst.status === 'running' || inst.status === 'starting';
+      {/* Instances Grid + Dedicated Create New Instance CTA Card */}
+      <div className="grid-3">
+        {filtered.map((inst) => {
+          const memPct = inst.max_memory_mb
+            ? Math.min(100, (inst.memory_mb / inst.max_memory_mb) * 100)
+            : 0;
+          const isRunning = inst.status === 'running' || inst.status === 'starting';
+          const art = getGameArt(inst.template_id, inst.category);
 
-            return (
+          return (
+            <div
+              key={inst.id}
+              className="instance-card"
+              onClick={() => onSelectInstance(inst.id)}
+              style={{
+                cursor: 'pointer',
+                overflow: 'hidden',
+                position: 'relative',
+              }}
+            >
+              {/* Transparent Game Artwork Watermark inside Instance Card */}
               <div
-                key={inst.id}
-                className="instance-card"
-                onClick={() => onSelectInstance(inst.id)}
-                style={{ cursor: 'pointer' }}
+                style={{
+                  position: 'absolute',
+                  inset: 0,
+                  backgroundImage: `url("${art.bgSvgDataUri}")`,
+                  backgroundRepeat: 'no-repeat',
+                  backgroundPosition: 'right -12px center',
+                  backgroundSize: '250px auto',
+                  opacity: isRunning ? 0.85 : 0.55,
+                  pointerEvents: 'none',
+                  transition: 'opacity 0.25s ease',
+                }}
+              />
+
+              <div className="instance-card-top" style={{ position: 'relative', zIndex: 1 }}>
+                <div style={{ display: 'flex', gap: 12, minWidth: 0 }}>
+                  <div
+                    className="instance-icon-box"
+                    style={{
+                      borderColor: `${art.accent}66`,
+                      color: art.accent,
+                    }}
+                  >
+                    {inst.category === 'horizon' && <Zap size={20} />}
+                    {inst.category === 'minecraft' && <Boxes size={20} />}
+                    {inst.category === 'steamcmd' && <Gamepad2 size={20} />}
+                    {inst.category === 'generic' && <Cpu size={20} />}
+                  </div>
+                  <div style={{ minWidth: 0 }}>
+                    <div
+                      style={{
+                        fontWeight: 700,
+                        fontSize: 15.5,
+                        whiteSpace: 'nowrap',
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        color: '#fff4d2',
+                      }}
+                    >
+                      {inst.name}
+                    </div>
+                    <div
+                      style={{
+                        fontSize: 11.5,
+                        color: 'var(--text-secondary)',
+                        fontFamily: 'var(--font-mono)',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 6,
+                      }}
+                    >
+                      <span style={{ color: art.accent, fontWeight: 600 }}>{art.title}</span>
+                      <span>• :{inst.port}</span>
+                    </div>
+                  </div>
+                </div>
+
+                <span className={`status-badge status-${inst.status}`}>
+                  <span className="status-dot" />
+                  {inst.status}
+                </span>
+              </div>
+
+              {/* Live Resource Bars */}
+              <div
+                style={{
+                  position: 'relative',
+                  zIndex: 1,
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 9,
+                }}
               >
-                <div className="instance-card-top">
-                  <div style={{ display: 'flex', gap: 12, minWidth: 0 }}>
-                    <div className="instance-icon-box">
-                      {inst.category === 'minecraft' && <Boxes size={20} />}
-                      {inst.category === 'steamcmd' && <Gamepad2 size={20} />}
-                      {inst.category === 'generic' && <Cpu size={20} />}
-                    </div>
-                    <div style={{ minWidth: 0 }}>
-                      <div
-                        style={{
-                          fontWeight: 600,
-                          fontSize: 15,
-                          whiteSpace: 'nowrap',
-                          overflow: 'hidden',
-                          textOverflow: 'ellipsis',
-                        }}
-                      >
-                        {inst.name}
-                      </div>
-                      <div style={{ fontSize: 12, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>
-                        {inst.template_id} • :{inst.port}
-                      </div>
-                    </div>
+                <div className="progress-row">
+                  <div className="progress-meta">
+                    <span>CPU</span>
+                    <span>{inst.cpu_percent.toFixed(1)}%</span>
                   </div>
-
-                  <span className={`status-badge status-${inst.status}`}>
-                    <span className="status-dot" />
-                    {inst.status}
-                  </span>
-                </div>
-
-                {/* Live Resource Bars */}
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 9 }}>
-                  <div className="progress-row">
-                    <div className="progress-meta">
-                      <span>CPU</span>
-                      <span>{inst.cpu_percent.toFixed(1)}%</span>
-                    </div>
-                    <div className="progress-track">
-                      <div
-                        className="progress-fill"
-                        style={{ width: `${Math.min(100, inst.cpu_percent)}%` }}
-                      />
-                    </div>
-                  </div>
-                  <div className="progress-row">
-                    <div className="progress-meta">
-                      <span>RAM</span>
-                      <span>
-                        {inst.memory_mb.toFixed(0)} / {inst.max_memory_mb} MB
-                      </span>
-                    </div>
-                    <div className="progress-track">
-                      <div
-                        className="progress-fill"
-                        style={{
-                          width: `${memPct}%`,
-                          background: memPct > 85 ? 'var(--danger)' : 'var(--success)',
-                        }}
-                      />
-                    </div>
+                  <div className="progress-track">
+                    <div
+                      className="progress-fill"
+                      style={{ width: `${Math.min(100, inst.cpu_percent)}%` }}
+                    />
                   </div>
                 </div>
+                <div className="progress-row">
+                  <div className="progress-meta">
+                    <span>RAM</span>
+                    <span>
+                      {inst.memory_mb.toFixed(0)} / {inst.max_memory_mb} MB
+                    </span>
+                  </div>
+                  <div className="progress-track">
+                    <div
+                      className="progress-fill"
+                      style={{
+                        width: `${memPct}%`,
+                        background: memPct > 85 ? 'var(--danger)' : 'var(--success)',
+                      }}
+                    />
+                  </div>
+                </div>
+              </div>
 
+              <div
+                style={{
+                  position: 'relative',
+                  zIndex: 1,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  paddingTop: 10,
+                  borderTop: '1px solid var(--border-subtle)',
+                  gap: 8,
+                }}
+              >
                 <div
                   style={{
                     display: 'flex',
                     alignItems: 'center',
-                    justifyContent: 'space-between',
-                    paddingTop: 10,
-                    borderTop: '1px solid var(--border-subtle)',
-                    gap: 8,
+                    gap: 12,
+                    fontSize: 12,
+                    color: 'var(--text-secondary)',
                   }}
                 >
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 12, fontSize: 12, color: 'var(--text-secondary)' }}>
-                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-                      <Users size={13} /> {inst.active_players.length}/{inst.max_players}
-                    </span>
-                    {isRunning && <span>Up: {formatDuration(inst.uptime_secs)}</span>}
-                  </div>
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                    <Users size={13} /> {inst.active_players.length}/{inst.max_players}
+                  </span>
+                  {isRunning && <span>Up: {formatDuration(inst.uptime_secs)}</span>}
+                </div>
 
-                  <div style={{ display: 'flex', gap: 6 }}>
-                    {isRunning ? (
-                      <button
-                        className="btn btn-danger btn-sm"
-                        disabled={busyId === inst.id}
-                        onClick={(e) => handleAction(e, inst.id, 'stop')}
-                      >
-                        <Square size={12} /> Stop
-                      </button>
-                    ) : (
-                      <button
-                        className="btn btn-success btn-sm"
-                        disabled={busyId === inst.id}
-                        onClick={(e) => handleAction(e, inst.id, 'start')}
-                      >
-                        <Play size={12} /> Avvia
-                      </button>
-                    )}
+                <div style={{ display: 'flex', gap: 6 }}>
+                  {isRunning ? (
                     <button
-                      className="btn btn-secondary btn-sm"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onSelectInstance(inst.id);
-                      }}
+                      className="btn btn-danger btn-sm"
+                      disabled={busyId === inst.id}
+                      onClick={(e) => handleAction(e, inst.id, 'stop')}
                     >
-                      <Settings2 size={13} /> Gestisci
+                      <Square size={12} /> Stop
                     </button>
-                  </div>
+                  ) : (
+                    <button
+                      className="btn btn-success btn-sm"
+                      disabled={busyId === inst.id}
+                      onClick={(e) => handleAction(e, inst.id, 'start')}
+                    >
+                      <Play size={12} /> Avvia
+                    </button>
+                  )}
+                  <button
+                    className="btn btn-secondary btn-sm"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onSelectInstance(inst.id);
+                    }}
+                  >
+                    <Settings2 size={13} /> Menu Completo
+                  </button>
                 </div>
               </div>
-            );
-          })}
-        </div>
-      )}
+            </div>
+          );
+        })}
+
+        {/* Always-Visible "Crea Nuova Istanza" Gold Hero Card */}
+        <button
+          type="button"
+          onClick={onOpenCreate}
+          className="instance-card"
+          style={{
+            border: '2px dashed rgba(245, 185, 50, 0.5)',
+            background:
+              'radial-gradient(circle at 50% 35%, rgba(245, 185, 50, 0.14), rgba(15, 15, 22, 0.9))',
+            alignItems: 'center',
+            justifyContent: 'center',
+            textAlign: 'center',
+            minHeight: 195,
+            gap: 10,
+          }}
+        >
+          <div
+            style={{
+              width: 48,
+              height: 48,
+              borderRadius: 12,
+              background: 'linear-gradient(135deg, #ffd466, #f5b932)',
+              color: '#160f02',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              boxShadow: '0 0 22px rgba(245, 185, 50, 0.45)',
+            }}
+          >
+            <Plus size={24} strokeWidth={2.5} />
+          </div>
+          <div
+            style={{
+              fontFamily: 'var(--font-display)',
+              fontSize: 18,
+              fontWeight: 700,
+              letterSpacing: '0.05em',
+              textTransform: 'uppercase',
+              color: '#fff4d2',
+            }}
+          >
+            + Crea Nuova Istanza
+          </div>
+          <div style={{ fontSize: 12.5, color: 'var(--text-secondary)', maxWidth: 250 }}>
+            Dispiega in 1 click un server Horizon MC (Rust), Minecraft Java/Bedrock, SteamCMD o App Nativa
+          </div>
+        </button>
+      </div>
     </div>
   );
 };
