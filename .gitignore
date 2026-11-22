@@ -1,0 +1,19 @@
+# Rust build artifacts
+/target/
+**/*.rs.bk
+
+# Runtime data & SQLite DB
+/goldsmp-data/
+/pulsepanel-data/
+*.db
+*.db-shm
+*.db-wal
+
+# Frontend dependencies & build output
+/frontend/node_modules/
+/frontend/dist/
+
+# Environment & OS files
+.env
+.env.local
+.DS_Store
