@@ -6,6 +6,7 @@ import {
   Boxes,
   Cpu,
   Gamepad2,
+  Globe,
   Play,
   Plus,
   Search,
@@ -36,6 +37,9 @@ export const InstancesPage: React.FC<InstancesPageProps> = ({
   const [search, setSearch] = useState('');
   const [catFilter, setCatFilter] = useState('all');
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [quickRepoUrl, setQuickRepoUrl] = useState('');
+  const [quickBranch, setQuickBranch] = useState('main');
+  const [deployingRepo, setDeployingRepo] = useState(false);
 
   const runningCount = instances.filter((i) => i.status === 'running').length;
   const totalPlayers = instances.reduce((acc, i) => acc + i.active_players.length, 0);
@@ -47,6 +51,30 @@ export const InstancesPage: React.FC<InstancesPageProps> = ({
       i.template_id.toLowerCase().includes(search.toLowerCase());
     return matchCat && matchSearch;
   });
+
+  const handleQuickGithubDeploy = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!quickRepoUrl.trim()) return;
+    setDeployingRepo(true);
+    try {
+      const created = await api<Instance>('/api/instances/github-deploy', {
+        method: 'POST',
+        body: JSON.stringify({
+          repo_url: quickRepoUrl.trim(),
+          branch: quickBranch.trim() || 'main',
+          auto_start: true,
+        }),
+      });
+      setQuickRepoUrl('');
+      onNotify(`Web Service "${created.name}" creato e avviato automaticamente sulla porta :${created.port}!`);
+      onRefresh();
+      onSelectInstance(created.id);
+    } catch (err: any) {
+      onNotify(`Errore deploy GitHub: ${err.message}`);
+    } finally {
+      setDeployingRepo(false);
+    }
+  };
 
   const handleAction = async (e: React.MouseEvent, id: string, action: 'start' | 'stop') => {
     e.stopPropagation();
@@ -67,9 +95,9 @@ export const InstancesPage: React.FC<InstancesPageProps> = ({
       {/* High-Visibility Header with Prominent Create Button */}
       <div className="page-header">
         <div>
-          <h1>Istanze & Server Dedicati</h1>
+          <h1>Istanze, Server & GitHub Web Services</h1>
           <p>
-            Gestione nativa in Rust • Horizon MC, Minecraft, SteamCMD & App con controllo completo
+            Gestione nativa in Rust • Horizon MC, Minecraft, SteamCMD & Auto-Deploy da link GitHub
           </p>
         </div>
         <button
@@ -86,6 +114,57 @@ export const InstancesPage: React.FC<InstancesPageProps> = ({
           + Crea Nuova Istanza
         </button>
       </div>
+
+      {/* 1-Click GitHub WebService Auto-Deploy Bar */}
+      <form
+        onSubmit={handleQuickGithubDeploy}
+        className="card"
+        style={{
+          marginBottom: 20,
+          padding: '14px 18px',
+          border: '1px solid rgba(56, 189, 248, 0.35)',
+          background:
+            'linear-gradient(90deg, rgba(56, 189, 248, 0.1) 0%, rgba(245, 185, 50, 0.08) 60%, rgba(15, 15, 22, 0.95) 100%)',
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <Globe size={19} color="var(--arc-cyan)" />
+            <div>
+              <div style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 15, letterSpacing: '0.04em', textTransform: 'uppercase', color: '#fff4d2' }}>
+                Auto-Deploy Web Service da Repository GitHub
+              </div>
+              <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
+                Incolla il link GitHub: GOLDSMP clona la repo, rileva lo stack (Node/Next/Vite, Python, Rust, Go, Static), installa le dipendenze e avvia il web server.
+              </div>
+            </div>
+          </div>
+
+          <div style={{ display: 'flex', gap: 8, flex: '1 1 420px', justifyContent: 'flex-end', flexWrap: 'wrap' }}>
+            <input
+              style={{ flex: 1, minWidth: 250 }}
+              placeholder="https://github.com/owner/repo oppure owner/repo..."
+              value={quickRepoUrl}
+              onChange={(e) => setQuickRepoUrl(e.target.value)}
+            />
+            <input
+              style={{ width: 95 }}
+              placeholder="Branch"
+              value={quickBranch}
+              onChange={(e) => setQuickBranch(e.target.value)}
+              title="Branch Git (default: main)"
+            />
+            <button
+              type="submit"
+              className="btn btn-primary"
+              disabled={deployingRepo || !quickRepoUrl.trim()}
+            >
+              <Globe size={15} />
+              {deployingRepo ? 'Configurazione...' : 'Crea & Avvia Web Service'}
+            </button>
+          </div>
+        </div>
+      </form>
 
       {/* Host Summary KPIs */}
       <div className="grid-4" style={{ marginBottom: 22 }}>
@@ -155,6 +234,7 @@ export const InstancesPage: React.FC<InstancesPageProps> = ({
             { id: 'horizon', label: 'Horizon MC (Rust)' },
             { id: 'minecraft', label: 'Minecraft' },
             { id: 'steamcmd', label: 'SteamCMD' },
+            { id: 'webservice', label: 'GitHub Web' },
             { id: 'generic', label: 'Generiche' },
           ].map((c) => (
             <button
@@ -215,6 +295,7 @@ export const InstancesPage: React.FC<InstancesPageProps> = ({
                     {inst.category === 'horizon' && <Zap size={20} />}
                     {inst.category === 'minecraft' && <Boxes size={20} />}
                     {inst.category === 'steamcmd' && <Gamepad2 size={20} />}
+                    {inst.category === 'webservice' && <Globe size={20} />}
                     {inst.category === 'generic' && <Cpu size={20} />}
                   </div>
                   <div style={{ minWidth: 0 }}>

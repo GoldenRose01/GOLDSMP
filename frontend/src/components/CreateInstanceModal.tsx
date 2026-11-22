@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { api } from '../api/client';
 import { AppTemplate, Instance } from '../types';
 import { getGameArt } from '../utils/gameArtwork';
-import { Boxes, Cpu, Gamepad2, Sliders, Sparkles, X, Zap } from 'lucide-react';
+import { Boxes, Cpu, Gamepad2, Globe, Sliders, Sparkles, X, Zap } from 'lucide-react';
 
 interface CreateInstanceModalProps {
   templates: AppTemplate[];
@@ -157,6 +157,7 @@ export const CreateInstanceModal: React.FC<CreateInstanceModalProps> = ({
                   { id: 'horizon', label: 'Horizon MC (Rust 26.3)' },
                   { id: 'minecraft', label: 'Minecraft Java & Bedrock' },
                   { id: 'steamcmd', label: 'SteamCMD Dedicated' },
+                  { id: 'webservice', label: 'GitHub Web Service' },
                   { id: 'generic', label: 'Node.js / Python / Custom' },
                 ].map((c) => (
                   <button

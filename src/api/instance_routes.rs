@@ -507,6 +507,8 @@ process.stdin.on('data', (chunk) => {{
             name, port, name
         );
         let _ = std::fs::write(work_dir.join("index.js"), demo_js);
+    } else if template_id == "github-webservice" {
+        sync_settings_to_disk(work_dir, template_id, settings);
     } else if template_id == "generic-python" {
         let demo_py = format!(
             r#"import sys, time
@@ -527,11 +529,226 @@ except KeyboardInterrupt:
     }
 }
 
+pub fn normalize_github_repo_url(raw: &str) -> (String, String) {
+    let trimmed = raw.trim().trim_end_matches('/').trim_end_matches(".git");
+    if trimmed.starts_with("http://") || trimmed.starts_with("https://") || trimmed.starts_with("git@") {
+        let repo_name = trimmed
+            .rsplit('/')
+            .next()
+            .unwrap_or("webservice")
+            .to_string();
+        (format!("{}.git", trimmed), repo_name)
+    } else if trimmed.contains('/') {
+        let repo_name = trimmed.rsplit('/').next().unwrap_or("webservice").to_string();
+        (format!("https://github.com/{}.git", trimmed), repo_name)
+    } else {
+        (
+            "https://github.com/GoldenRose01/GOLDSMP.git".to_string(),
+            if trimmed.is_empty() {
+                "goldsmp-web".to_string()
+            } else {
+                trimmed.to_string()
+            },
+        )
+    }
+}
+
+fn write_webservice_runner_script(
+    work_dir: &PathBuf,
+    settings: &HashMap<String, String>,
+) {
+    let get = |k: &str, def: &str| -> String {
+        settings.get(k).cloned().unwrap_or_else(|| def.to_string())
+    };
+    let (repo_git_url, _name) = normalize_github_repo_url(&get("repo_url", "https://github.com/GoldenRose01/GOLDSMP"));
+    let branch = get("branch", "main");
+    let subdir = get("root_subdir", "");
+    let auto_pull = get("auto_pull_on_start", "true");
+    let stack = get("detected_stack", "auto");
+    let install_cmd = get("install_command", "auto");
+    let build_cmd = get("build_command", "auto");
+    let start_cmd = get("start_command", "auto");
+    let port_val = get("port", "4000");
+
+    let script = format!(
+        r#"#!/usr/bin/env bash
+set -e
+
+REPO_URL="{repo_git_url}"
+BRANCH="{branch}"
+SUBDIR="{subdir}"
+AUTO_PULL="{auto_pull}"
+FORCED_STACK="{stack}"
+CUSTOM_INSTALL="{install_cmd}"
+CUSTOM_BUILD="{build_cmd}"
+CUSTOM_START="{start_cmd}"
+export PORT="${{PORT:-{port_val}}}"
+export HOST="0.0.0.0"
+
+echo "[GOLDSMP-WebService] ============================================"
+echo "[GOLDSMP-WebService] Repository : $REPO_URL (branch: $BRANCH)"
+echo "[GOLDSMP-WebService] Porta HTTP : $PORT"
+echo "[GOLDSMP-WebService] ============================================"
+
+if [ ! -d "repo/.git" ]; then
+  echo "[GOLDSMP-WebService] Clonazione repository da GitHub in corso..."
+  rm -rf repo
+  if ! git clone --depth 1 -b "$BRANCH" "$REPO_URL" repo 2>&1; then
+    echo "[GOLDSMP-WebService] Branch '$BRANCH' non trovato o clone diretto, provo clone default..."
+    git clone --depth 1 "$REPO_URL" repo 2>&1 || {{
+      echo "[GOLDSMP-WebService] Fallback locale: creazione web service starter in repo/..."
+      mkdir -p repo
+      cat << ' fallback_eof' > repo/index.js
+const http = require('http');
+const port = process.env.PORT || 4000;
+http.createServer((req, res) => {{
+  res.writeHead(200, {{ 'Content-Type': 'application/json' }});
+  res.end(JSON.stringify({{ status: 'online', service: 'GOLDSMP GitHub Auto-WebService', port }}));
+}}).listen(port, () => console.log('[WebService] Listening on http://0.0.0.0:' + port));
+fallback_eof
+    }}
+  fi
+elif [ "$AUTO_PULL" = "true" ]; then
+  echo "[GOLDSMP-WebService] Sincronizzazione ultimi commit (git pull)..."
+  (cd repo && git pull --ff-only 2>&1 || true)
+fi
+
+cd repo
+if [ -n "$SUBDIR" ] && [ -d "$SUBDIR" ]; then
+  cd "$SUBDIR"
+fi
+
+# Auto-detect Stack
+STACK="$FORCED_STACK"
+if [ "$STACK" = "auto" ]; then
+  if [ -f "package.json" ]; then
+    STACK="nodejs"
+  elif [ -f "requirements.txt" ] || [ -f "pyproject.toml" ] || [ -f "app.py" ] || [ -f "main.py" ]; then
+    STACK="python"
+  elif [ -f "Cargo.toml" ]; then
+    STACK="rust"
+  elif [ -f "go.mod" ]; then
+    STACK="go"
+  else
+    STACK="static"
+  fi
+fi
+
+echo "[GOLDSMP-WebService] Stack rilevato: $STACK (directory: $(pwd))"
+
+# 1. Install Dependencies
+if [ "$CUSTOM_INSTALL" != "auto" ] && [ -n "$CUSTOM_INSTALL" ]; then
+  echo "[GOLDSMP-WebService] Installazione custom: $CUSTOM_INSTALL"
+  eval "$CUSTOM_INSTALL"
+else
+  case "$STACK" in
+    nodejs)
+      if [ -f "package.json" ] && [ ! -d "node_modules" ]; then
+        echo "[GOLDSMP-WebService] Esecuzione npm install..."
+        npm install --no-audit --no-fund 2>&1
+      fi
+      ;;
+    python)
+      if [ -f "requirements.txt" ]; then
+        echo "[GOLDSMP-WebService] Installazione requirements.txt..."
+        pip3 install --user -r requirements.txt 2>&1 || true
+      fi
+      ;;
+  esac
+fi
+
+# 2. Build Step
+if [ "$CUSTOM_BUILD" != "auto" ] && [ -n "$CUSTOM_BUILD" ]; then
+  echo "[GOLDSMP-WebService] Build custom: $CUSTOM_BUILD"
+  eval "$CUSTOM_BUILD"
+else
+  case "$STACK" in
+    nodejs)
+      if [ -f "package.json" ] && grep -q '"build"' package.json && ! grep -q '"start"' package.json; then
+        echo "[GOLDSMP-WebService] Esecuzione npm run build..."
+        npm run build 2>&1 || true
+      fi
+      ;;
+    rust)
+      echo "[GOLDSMP-WebService] Compilazione Cargo..."
+      cargo build --release 2>&1
+      ;;
+    go)
+      echo "[GOLDSMP-WebService] Compilazione Go..."
+      go build -o app-server . 2>&1
+      ;;
+  esac
+fi
+
+# 3. Start Web Server
+if [ "$CUSTOM_START" != "auto" ] && [ -n "$CUSTOM_START" ]; then
+  echo "[GOLDSMP-WebService] Avvio custom: $CUSTOM_START (http://0.0.0.0:$PORT)"
+  exec bash -c "$CUSTOM_START"
+else
+  case "$STACK" in
+    nodejs)
+      if [ -f "package.json" ] && grep -q '"start"' package.json; then
+        echo "[GOLDSMP-WebService] Avvio con npm start su porta $PORT..."
+        exec npm start -- --port "$PORT"
+      elif [ -f "package.json" ] && grep -q '"dev"' package.json; then
+        echo "[GOLDSMP-WebService] Avvio con npm run dev su porta $PORT..."
+        exec npm run dev -- --port "$PORT" --host 0.0.0.0
+      elif [ -f "server.js" ]; then
+        exec node server.js
+      elif [ -f "app.js" ]; then
+        exec node app.js
+      else
+        exec node index.js
+      fi
+      ;;
+    python)
+      if [ -f "app.py" ]; then
+        exec python3 -u app.py
+      elif [ -f "main.py" ]; then
+        exec python3 -u main.py
+      elif [ -f "manage.py" ]; then
+        exec python3 -u manage.py runserver "0.0.0.0:$PORT"
+      else
+        exec python3 -m http.server "$PORT"
+      fi
+      ;;
+    rust)
+      exec cargo run --release
+      ;;
+    go)
+      exec ./app-server
+      ;;
+    *)
+      echo "[GOLDSMP-WebService] Avvio Static HTTP Server su http://0.0.0.0:$PORT..."
+      exec python3 -m http.server "$PORT"
+      ;;
+  esac
+fi
+"#
+    );
+
+    let script_path = work_dir.join("goldsmp-webservice.sh");
+    let _ = std::fs::write(&script_path, script);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if let Ok(m) = std::fs::metadata(&script_path) {
+            let mut p = m.permissions();
+            p.set_mode(0o755);
+            let _ = std::fs::set_permissions(&script_path, p);
+        }
+    }
+}
+
 fn sync_settings_to_disk(
     work_dir: &PathBuf,
     template_id: &str,
     settings: &HashMap<String, String>,
 ) {
+    if template_id == "github-webservice" {
+        write_webservice_runner_script(work_dir, settings);
+        return;
+    }
     if template_id == "horizon-mc" {
         let get = |k: &str, def: &str| -> String {
             settings.get(k).cloned().unwrap_or_else(|| def.to_string())
@@ -746,4 +963,105 @@ pub async fn install_horizon_server(
         "message": version_msg
     })))
 }
+
+#[derive(Deserialize)]
+pub struct QuickGithubDeployReq {
+    pub repo_url: String,
+    pub name: Option<String>,
+    pub branch: Option<String>,
+    pub port: Option<u16>,
+    pub root_subdir: Option<String>,
+    pub auto_start: Option<bool>,
+}
+
+pub async fn quick_deploy_github_repo(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Json(req): Json<QuickGithubDeployReq>,
+) -> Result<Json<Instance>, (StatusCode, String)> {
+    if req.repo_url.trim().is_empty() {
+        return Err((StatusCode::BAD_REQUEST, "Inserisci un link GitHub valido".into()));
+    }
+    let (norm_git_url, repo_name) = normalize_github_repo_url(&req.repo_url);
+    let clean_url = norm_git_url.trim_end_matches(".git").to_string();
+    let inst_name = req
+        .name
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(|| format!("Web: {}", repo_name));
+
+    let port = req.port.unwrap_or_else(|| {
+        let used: Vec<u16> = state.pm.list_instances().into_iter().map(|i| i.port).collect();
+        let mut p = 4000u16;
+        while used.contains(&p) {
+            p += 1;
+        }
+        p
+    });
+
+    let mut custom_settings = HashMap::new();
+    custom_settings.insert("repo_url".into(), clean_url.clone());
+    custom_settings.insert(
+        "branch".into(),
+        req.branch.unwrap_or_else(|| "main".into()),
+    );
+    custom_settings.insert(
+        "root_subdir".into(),
+        req.root_subdir.unwrap_or_default(),
+    );
+    custom_settings.insert("port".into(), port.to_string());
+
+    let create_req = CreateInstanceReq {
+        name: inst_name,
+        template_id: "github-webservice".into(),
+        port: Some(port),
+        max_memory_mb: Some(1024),
+        max_players: Some(100),
+        auto_start: Some(true),
+        auto_restart: Some(true),
+        executable: Some("/bin/bash".into()),
+        args: Some(vec!["goldsmp-webservice.sh".into()]),
+        settings: Some(custom_settings),
+    };
+
+    let Json(created) = create_instance(State(state.clone()), auth.clone(), Json(create_req)).await?;
+
+    if req.auto_start.unwrap_or(true) {
+        let _ = state.pm.start_instance(&created.id).await;
+    }
+
+    let refreshed = state.pm.load_instance(&created.id).unwrap_or(created);
+    Ok(Json(refreshed))
+}
+
+pub async fn sync_github_webservice(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Path(id): Path<String>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    if !auth.can_access_instance(&id) {
+        return Err((StatusCode::FORBIDDEN, "Accesso negato".into()));
+    }
+    let inst = state
+        .pm
+        .load_instance(&id)
+        .ok_or((StatusCode::NOT_FOUND, "Istanza non trovata".into()))?;
+    let work_dir = PathBuf::from(&inst.work_dir);
+    sync_settings_to_disk(&work_dir, "github-webservice", &inst.settings);
+
+    let _ = state.pm.restart_instance(&id).await;
+
+    state.db.log_audit(
+        &auth.0.username,
+        "GITHUB_WEBSERVICE_SYNC",
+        &inst.name,
+        "Git pull + rebuild + restart eseguito",
+        "local",
+    );
+
+    Ok(Json(serde_json::json!({
+        "status": "restarted",
+        "message": "Repository sincronizzata (git pull) e web service riavviato!"
+    })))
+}
+
 

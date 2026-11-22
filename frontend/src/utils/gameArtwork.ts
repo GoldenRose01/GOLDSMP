@@ -163,7 +163,31 @@ export function getGameArt(templateId: string, category?: string): GameArtSpec {
     };
   }
 
-  // 8. Node.js / Python / Native Custom
+  // 8. GitHub Web Service / Auto-Deployer
+  if (id.includes('github') || id.includes('webservice') || category === 'webservice') {
+    const svg = `
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 320">
+        <!-- Git Branch Nodes + Web Globe Artwork -->
+        <circle cx="465" cy="155" r="86" fill="#38bdf8" fill-opacity="0.14" stroke="#f5b932" stroke-opacity="0.5" stroke-width="2.5"/>
+        <ellipse cx="465" cy="155" rx="44" ry="86" fill="none" stroke="#38bdf8" stroke-opacity="0.4" stroke-width="2"/>
+        <line x1="379" y1="155" x2="551" y2="155" stroke="#38bdf8" stroke-opacity="0.4" stroke-width="2"/>
+        <!-- Git Branch Graph -->
+        <path d="M 320 220 L 320 105 M 320 175 C 320 140 365 140 365 110" fill="none" stroke="#ffd466" stroke-opacity="0.85" stroke-width="4" stroke-linecap="round"/>
+        <circle cx="320" cy="220" r="8" fill="#f5b932"/>
+        <circle cx="320" cy="105" r="8" fill="#f5b932"/>
+        <circle cx="365" cy="110" r="8" fill="#38bdf8"/>
+      </svg>
+    `;
+    return {
+      title: 'GitHub Web Service',
+      badge: 'AUTO-CLONE & DEPLOY',
+      accent: '#38bdf8',
+      secondary: '#f5b932',
+      bgSvgDataUri: encodeSvg(svg),
+    };
+  }
+
+  // 9. Node.js / Python / Native Custom
   const svg = `
     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 320">
       <polygon points="455,62 538,110 538,206 455,254 372,206 372,110" fill="#38bdf8" fill-opacity="0.18" stroke="#f5b932" stroke-opacity="0.5" stroke-width="3"/>

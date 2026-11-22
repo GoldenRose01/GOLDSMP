@@ -24,6 +24,7 @@ import {
   FileText,
   Folder,
   FolderPlus,
+  Globe,
   HardDrive,
   KeyRound,
   Package,
@@ -55,6 +56,7 @@ type TabId =
   | 'status'
   | 'console'
   | 'horizon'
+  | 'webservice'
   | 'config'
   | 'files'
   | 'ftp'
@@ -441,6 +443,9 @@ export const InstanceDetailPage: React.FC<InstanceDetailPageProps> = ({
           { id: 'console', label: 'Console Live', icon: Terminal },
           ...(inst.template_id === 'horizon-mc' || inst.category === 'horizon'
             ? [{ id: 'horizon', label: 'Horizon MC (Rust)', icon: Zap }]
+            : []),
+          ...(inst.template_id === 'github-webservice' || inst.category === 'webservice'
+            ? [{ id: 'webservice', label: 'GitHub Web Service', icon: Globe }]
             : []),
           { id: 'config', label: 'Configurazione', icon: Settings },
           { id: 'files', label: 'File Manager', icon: Folder },
@@ -979,6 +984,113 @@ export const InstanceDetailPage: React.FC<InstanceDetailPageProps> = ({
                     </div>
                   ))}
                 </div>
+              </form>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* TAB GITHUB WEB SERVICE AUTO-DEPLOYER */}
+      {tab === 'webservice' && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+          <div className="card">
+            <div className="card-header" style={{ flexWrap: 'wrap' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <Globe size={18} color="var(--arc-cyan)" />
+                <span className="card-title">GitHub Web Service — Auto-Clone, Build & Run</span>
+              </div>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                <button
+                  type="button"
+                  className="btn btn-primary btn-sm"
+                  onClick={async () => {
+                    try {
+                      const res = await api<{ message: string }>(
+                        `/api/instances/${instanceId}/github/sync`,
+                        { method: 'POST' }
+                      );
+                      onNotify(res.message);
+                      loadInstance();
+                    } catch (err: any) {
+                      onNotify(err.message);
+                    }
+                  }}
+                >
+                  <RotateCw size={14} /> Git Pull, Rebuild & Riavvia Ora
+                </button>
+                <a
+                  href={`http://${window.location.hostname || 'localhost'}:${inst.port}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="btn btn-secondary btn-sm"
+                >
+                  <Globe size={14} /> Apri Web Service (:{inst.port})
+                </a>
+                <button
+                  type="button"
+                  className="btn btn-secondary btn-sm"
+                  onClick={() => {
+                    setCurPath('repo');
+                    setTab('files');
+                  }}
+                >
+                  <Folder size={14} /> Esplora File Repo (/repo)
+                </button>
+              </div>
+            </div>
+
+            <p style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 16 }}>
+              Questo servizio clona automaticamente la repository GitHub indicata, rileva lo stack
+              (<strong>Node.js / Next / Vite</strong>, <strong>Python</strong>, <strong>Rust</strong>,{' '}
+              <strong>Go</strong> o <strong>Static HTML</strong>), installa le dipendenze e mantiene attivo il web
+              server sulla porta <strong>:{inst.port}</strong>.
+            </p>
+
+            {tpl && (
+              <form onSubmit={saveConfig}>
+                <div className="grid-3" style={{ marginBottom: 14 }}>
+                  {tpl.settings_schema.map((field) => (
+                    <div key={field.key} className="field">
+                      <label>{field.label}</label>
+                      {field.field_type === 'select' && field.options ? (
+                        <select
+                          value={cfgSettings[field.key] ?? field.default_value}
+                          onChange={(e) =>
+                            setCfgSettings((s) => ({ ...s, [field.key]: e.target.value }))
+                          }
+                        >
+                          {field.options.map((opt) => (
+                            <option key={opt} value={opt}>
+                              {opt}
+                            </option>
+                          ))}
+                        </select>
+                      ) : field.field_type === 'boolean' ? (
+                        <select
+                          value={cfgSettings[field.key] ?? field.default_value}
+                          onChange={(e) =>
+                            setCfgSettings((s) => ({ ...s, [field.key]: e.target.value }))
+                          }
+                        >
+                          <option value="true">Attivo (true)</option>
+                          <option value="false">Disattivo (false)</option>
+                        </select>
+                      ) : (
+                        <input
+                          type={field.field_type === 'number' ? 'number' : 'text'}
+                          value={cfgSettings[field.key] ?? field.default_value}
+                          onChange={(e) =>
+                            setCfgSettings((s) => ({ ...s, [field.key]: e.target.value }))
+                          }
+                        />
+                      )}
+                      <span className="field-hint">{field.description}</span>
+                    </div>
+                  ))}
+                </div>
+                <button type="submit" className="btn btn-primary">
+                  <Save size={14} /> Salva Configurazione Repository & Pipeline
+                </button>
               </form>
             )}
           </div>

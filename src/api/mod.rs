@@ -133,10 +133,12 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/instances/:id/files/mkdir", post(file_routes::create_dir))
         .route("/api/instances/:id/files/rename", post(file_routes::rename_file))
         .route("/api/instances/:id/files/download-url", post(file_routes::download_from_url))
-        // Per-Instance FTP Access & Horizon MC 1-Click Installer
+        // Per-Instance FTP Access, Horizon MC 1-Click Installer & GitHub WebService Auto-Deploy
+        .route("/api/instances/github-deploy", post(instance_routes::quick_deploy_github_repo))
         .route("/api/instances/:id/ftp", get(instance_routes::get_ftp_info))
         .route("/api/instances/:id/ftp/rotate", post(instance_routes::rotate_ftp_password))
         .route("/api/instances/:id/horizon/install", post(instance_routes::install_horizon_server))
+        .route("/api/instances/:id/github/sync", post(instance_routes::sync_github_webservice))
         // Backups
         .route(
             "/api/instances/:id/backups",

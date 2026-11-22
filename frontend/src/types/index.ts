@@ -23,7 +23,7 @@ export interface TemplateSettingField {
 export interface AppTemplate {
   id: string;
   name: string;
-  category: 'horizon' | 'minecraft' | 'steamcmd' | 'generic';
+  category: 'horizon' | 'minecraft' | 'steamcmd' | 'webservice' | 'generic';
   description: string;
   icon: string;
   default_port: number;
