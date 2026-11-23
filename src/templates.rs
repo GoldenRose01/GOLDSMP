@@ -347,6 +347,31 @@ pub fn builtin_templates() -> Vec<AppTemplate> {
             },
             settings_schema: vec![
                 TemplateSettingField {
+                    key: "mc_loader".into(),
+                    label: "Motore Server (Auto-Download server.jar)".into(),
+                    description: "Scegli Paper, Purpur, Fabric o Vanilla: GOLDSMP scarica automaticamente il server.jar ufficiale!".into(),
+                    field_type: "select".into(),
+                    default_value: "paper".into(),
+                    options: Some(vec![
+                        "paper".into(),
+                        "purpur".into(),
+                        "fabric".into(),
+                        "vanilla".into(),
+                    ]),
+                    category: "Motore & Versione JAR".into(),
+                    config_file: None,
+                },
+                TemplateSettingField {
+                    key: "mc_version".into(),
+                    label: "Versione Minecraft (latest o es. 1.21.4 / 26.3)".into(),
+                    description: "Scrivi 'latest' per l'ultima release stabile oppure una versione specifica".into(),
+                    field_type: "string".into(),
+                    default_value: "latest".into(),
+                    options: None,
+                    category: "Motore & Versione JAR".into(),
+                    config_file: None,
+                },
+                TemplateSettingField {
                     key: "server-port".into(),
                     label: "Porta Server TCP".into(),
                     description: "Porta TCP su cui ascolta il server Minecraft".into(),

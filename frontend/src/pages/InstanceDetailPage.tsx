@@ -833,6 +833,80 @@ export const InstanceDetailPage: React.FC<InstanceDetailPageProps> = ({
             </div>
           </div>
 
+          {inst.template_id === 'minecraft-java' && (
+            <div className="card" style={{ borderColor: 'rgba(34, 197, 94, 0.35)' }}>
+              <div className="card-header" style={{ flexWrap: 'wrap' }}>
+                <span className="card-title">
+                  <Download size={16} color="var(--success)" /> Auto-Installer & Cambio Motore server.jar (Paper / Purpur / Fabric / Vanilla)
+                </span>
+                <button
+                  type="button"
+                  className="btn btn-primary btn-sm"
+                  disabled={horizonInstalling}
+                  onClick={async () => {
+                    setHorizonInstalling(true);
+                    try {
+                      const loader = cfgSettings['mc_loader'] || 'paper';
+                      const version = cfgSettings['mc_version'] || 'latest';
+                      const res = await api<{
+                        loader: string;
+                        mc_version: string;
+                        build_info: string;
+                        size_bytes: number;
+                      }>(`/api/instances/${instanceId}/minecraft/install-jar`, {
+                        method: 'POST',
+                        body: JSON.stringify({ loader, version }),
+                      });
+                      onNotify(
+                        `Scaricato server.jar: ${res.loader.toUpperCase()} ${res.mc_version} (${res.build_info})!`
+                      );
+                    } catch (err: any) {
+                      onNotify(`Errore download server.jar: ${err.message}`);
+                    } finally {
+                      setHorizonInstalling(false);
+                    }
+                  }}
+                >
+                  <Download size={14} />{' '}
+                  {horizonInstalling
+                    ? 'Download server.jar in corso...'
+                    : `Scarica / Aggiorna server.jar (${(cfgSettings['mc_loader'] || 'paper').toUpperCase()})`}
+                </button>
+              </div>
+              <p style={{ fontSize: 12.5, color: 'var(--text-secondary)', marginBottom: 12 }}>
+                Ogni nuova istanza Minecraft Java scarica automaticamente <code>server.jar</code> alla creazione e al primo avvio.
+                Usa questo pannello se vuoi cambiare motore (es. passare da <strong>Paper</strong> a <strong>Fabric</strong>,{' '}
+                <strong>Purpur</strong> o <strong>Vanilla</strong>) o aggiornare la versione di Minecraft.
+              </p>
+              <div className="grid-2">
+                <div className="field">
+                  <label>Motore Server (Loader)</label>
+                  <select
+                    value={cfgSettings['mc_loader'] || 'paper'}
+                    onChange={(e) =>
+                      setCfgSettings((s) => ({ ...s, mc_loader: e.target.value }))
+                    }
+                  >
+                    <option value="paper">PaperMC (Consigliato per Plugin & Performance)</option>
+                    <option value="purpur">Purpur (Fork di Paper con opzioni extra)</option>
+                    <option value="fabric">Fabric Server (Consigliato per Mod /mods)</option>
+                    <option value="vanilla">Mojang Vanilla Ufficiale</option>
+                  </select>
+                </div>
+                <div className="field">
+                  <label>Versione Minecraft (latest o specifica es. 1.21.4 / 26.3)</label>
+                  <input
+                    value={cfgSettings['mc_version'] || 'latest'}
+                    onChange={(e) =>
+                      setCfgSettings((s) => ({ ...s, mc_version: e.target.value }))
+                    }
+                    placeholder="latest"
+                  />
+                </div>
+              </div>
+            </div>
+          )}
+
           {tpl && tpl.settings_schema.length > 0 && (() => {
             const cats = Array.from(new Set(tpl.settings_schema.map((s) => s.category)));
             const filteredSchema = tpl.settings_schema.filter((f) => {

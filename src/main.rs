@@ -7,6 +7,7 @@ mod files;
 mod ftp_server;
 mod gdrive_backup;
 mod mailer;
+mod mc_installer;
 mod models;
 mod modrinth;
 mod process_manager;

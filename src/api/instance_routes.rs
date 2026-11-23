@@ -85,9 +85,31 @@ pub async fn create_instance(
         }
     }
 
-    let port = req.port.unwrap_or(tpl.default_port);
+    let used_ports: Vec<u16> = state.pm.list_instances().into_iter().map(|i| i.port).collect();
+    let port = match req.port {
+        Some(p) if !used_ports.contains(&p) => p,
+        _ => {
+            if tpl.category == "minecraft" || tpl.category == "horizon" {
+                // Allocate inside the standard router range 25565..=25569, then 25560..=25564
+                (25565..=25569)
+                    .chain(25560..=25564)
+                    .chain(25570..=25599)
+                    .find(|p| !used_ports.contains(p))
+                    .unwrap_or(tpl.default_port)
+            } else {
+                let mut p = req.port.unwrap_or(tpl.default_port);
+                while used_ports.contains(&p) {
+                    p += 1;
+                }
+                p
+            }
+        }
+    };
     settings
         .entry("server-port".into())
+        .and_modify(|v| *v = port.to_string());
+    settings
+        .entry("port".into())
         .and_modify(|v| *v = port.to_string());
 
     let executable = req.executable.unwrap_or_else(|| tpl.default_executable.clone());
@@ -100,6 +122,30 @@ pub async fn create_instance(
 
     // Write starter config files into the new instance workspace
     write_starter_files(&work_dir, &tpl.id, &req.name, port, &settings);
+
+    // If this is a Minecraft Java instance and server.jar doesn't exist yet, download it automatically!
+    if tpl.id == "minecraft-java" && !work_dir.join("server.jar").exists() {
+        let loader = settings
+            .get("mc_loader")
+            .cloned()
+            .unwrap_or_else(|| "paper".into());
+        let ver = settings
+            .get("mc_version")
+            .cloned()
+            .unwrap_or_else(|| "latest".into());
+        if let Ok(res) =
+            crate::mc_installer::download_minecraft_server_jar(&state.http, &work_dir, &loader, &ver)
+                .await
+        {
+            tracing::info!(
+                "Auto-scaricato server.jar per '{}': {} {} ({})",
+                req.name,
+                res.loader,
+                res.mc_version,
+                res.build_info
+            );
+        }
+    }
 
     {
         let conn = state.db.conn();
@@ -154,6 +200,8 @@ pub async fn update_instance(
     }
     if let Some(p) = req.port {
         inst.port = p;
+        inst.settings.insert("server-port".into(), p.to_string());
+        inst.settings.insert("port".into(), p.to_string());
     }
     if let Some(e) = req.executable {
         inst.executable = e;
@@ -166,8 +214,12 @@ pub async fn update_instance(
     }
     if let Some(s) = req.settings {
         inst.settings = s;
-        sync_settings_to_disk(&PathBuf::from(&inst.work_dir), &inst.template_id, &inst.settings);
+        // Keep port and server-port synchronized
+        inst.settings.insert("server-port".into(), inst.port.to_string());
+        inst.settings.insert("port".into(), inst.port.to_string());
     }
+    sync_settings_to_disk(&PathBuf::from(&inst.work_dir), &inst.template_id, &inst.settings);
+
     if let Some(v) = req.auto_start {
         inst.auto_start = v;
     }
@@ -267,6 +319,30 @@ pub async fn start_instance(
     auth: AuthUser,
     Path(id): Path<String>,
 ) -> Result<Json<Instance>, (StatusCode, String)> {
+    // Before starting a Minecraft Java instance, ensure server.jar exists (auto-download if missing!)
+    if let Some(inst) = state.pm.load_instance(&id) {
+        let wd = PathBuf::from(&inst.work_dir);
+        if inst.template_id == "minecraft-java" && !wd.join("server.jar").exists() {
+            let loader = inst
+                .settings
+                .get("mc_loader")
+                .cloned()
+                .unwrap_or_else(|| "paper".into());
+            let ver = inst
+                .settings
+                .get("mc_version")
+                .cloned()
+                .unwrap_or_else(|| "latest".into());
+            let _ = crate::mc_installer::download_minecraft_server_jar(
+                &state.http,
+                &wd,
+                &loader,
+                &ver,
+            )
+            .await;
+        }
+    }
+
     state
         .pm
         .start_instance(&id)
@@ -828,6 +904,9 @@ native_hmod_loader = {}
         let mut keys: Vec<&String> = settings.keys().collect();
         keys.sort();
         for k in keys {
+            if k == "mc_loader" || k == "mc_version" {
+                continue;
+            }
             if let Some(v) = settings.get(k) {
                 lines.push(format!("{}={}", k, v));
             }
@@ -1063,5 +1142,69 @@ pub async fn sync_github_webservice(
         "message": "Repository sincronizzata (git pull) e web service riavviato!"
     })))
 }
+
+#[derive(Deserialize)]
+pub struct InstallMcJarReq {
+    #[serde(default = "default_mc_loader")]
+    pub loader: String,
+    #[serde(default = "default_mc_ver")]
+    pub version: String,
+}
+fn default_mc_loader() -> String {
+    "paper".into()
+}
+fn default_mc_ver() -> String {
+    "latest".into()
+}
+
+pub async fn install_minecraft_jar(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Path(id): Path<String>,
+    Json(req): Json<InstallMcJarReq>,
+) -> Result<Json<crate::mc_installer::McInstallResult>, (StatusCode, String)> {
+    if !auth.can_access_instance(&id) {
+        return Err((StatusCode::FORBIDDEN, "Accesso negato".into()));
+    }
+    let mut inst = state
+        .pm
+        .load_instance(&id)
+        .ok_or((StatusCode::NOT_FOUND, "Istanza non trovata".into()))?;
+    let work_dir = PathBuf::from(&inst.work_dir);
+
+    let res = crate::mc_installer::download_minecraft_server_jar(
+        &state.http,
+        &work_dir,
+        &req.loader,
+        &req.version,
+    )
+    .await
+    .map_err(|e| (StatusCode::BAD_GATEWAY, e))?;
+
+    inst.settings.insert("mc_loader".into(), res.loader.clone());
+    inst.settings
+        .insert("mc_version".into(), res.mc_version.clone());
+    {
+        let conn = state.db.conn();
+        let _ = conn.execute(
+            "UPDATE instances SET settings_json = ?1 WHERE id = ?2",
+            params![serde_json::to_string(&inst.settings).unwrap(), id],
+        );
+    }
+
+    state.db.log_audit(
+        &auth.0.username,
+        "MC_JAR_INSTALL",
+        &inst.name,
+        &format!(
+            "Scaricato server.jar: {} {} ({})",
+            res.loader, res.mc_version, res.build_info
+        ),
+        "local",
+    );
+
+    Ok(Json(res))
+}
+
 
 

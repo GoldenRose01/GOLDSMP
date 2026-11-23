@@ -138,6 +138,7 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/instances/:id/ftp", get(instance_routes::get_ftp_info))
         .route("/api/instances/:id/ftp/rotate", post(instance_routes::rotate_ftp_password))
         .route("/api/instances/:id/horizon/install", post(instance_routes::install_horizon_server))
+        .route("/api/instances/:id/minecraft/install-jar", post(instance_routes::install_minecraft_jar))
         .route("/api/instances/:id/github/sync", post(instance_routes::sync_github_webservice))
         // Backups
         .route(
