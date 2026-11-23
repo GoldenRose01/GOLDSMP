@@ -439,7 +439,7 @@ pub async fn incoming_webhook(
     Ok(StatusCode::OK)
 }
 
-// --- Modrinth Store ---
+// --- Modrinth Store, Personal Account Login & Direct Mod Upload ---
 
 #[derive(Deserialize)]
 pub struct ModSearchQuery {
@@ -447,6 +447,7 @@ pub struct ModSearchQuery {
     pub q: String,
     #[serde(default = "default_mod_type")]
     pub project_type: String,
+    pub mc_version: Option<String>,
 }
 fn default_mod_type() -> String {
     "plugin".into()
@@ -457,7 +458,75 @@ pub async fn search_mods(
     _auth: AuthUser,
     Query(q): Query<ModSearchQuery>,
 ) -> Result<Json<Vec<ModrinthHit>>, (StatusCode, String)> {
-    let hits = modrinth::search_modrinth(&state.http, &q.q, &q.project_type)
+    let m_auth = modrinth::load_auth_config(&state.db);
+    let token = if m_auth.connected && !m_auth.token.is_empty() {
+        Some(m_auth.token.as_str())
+    } else {
+        None
+    };
+    let hits = modrinth::search_modrinth(
+        &state.http,
+        &q.q,
+        &q.project_type,
+        q.mc_version.as_deref(),
+        token,
+    )
+    .await
+    .map_err(|e| (StatusCode::BAD_GATEWAY, e))?;
+    Ok(Json(hits))
+}
+
+pub async fn modrinth_auth_status(
+    State(state): State<AppState>,
+    _auth: AuthUser,
+) -> Json<modrinth::ModrinthAuthPublicStatus> {
+    Json(modrinth::get_auth_public_status(&state.db))
+}
+
+#[derive(Deserialize)]
+pub struct ModrinthLoginReq {
+    pub token: String,
+}
+
+pub async fn modrinth_login(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Json(req): Json<ModrinthLoginReq>,
+) -> Result<Json<modrinth::ModrinthAuthPublicStatus>, (StatusCode, String)> {
+    let st = modrinth::login_with_token(&state.db, &state.http, &req.token)
+        .await
+        .map_err(|e| (StatusCode::BAD_REQUEST, e))?;
+    state.db.log_audit(
+        &auth.0.username,
+        "MODRINTH_LOGIN",
+        &st.username,
+        "Account Modrinth connesso (accesso a mod personali/private attivo)",
+        "local",
+    );
+    Ok(Json(st))
+}
+
+pub async fn modrinth_logout(
+    State(state): State<AppState>,
+    auth: AuthUser,
+) -> Result<Json<modrinth::ModrinthAuthPublicStatus>, (StatusCode, String)> {
+    let st = modrinth::logout_modrinth(&state.db)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    state.db.log_audit(
+        &auth.0.username,
+        "MODRINTH_LOGOUT",
+        "modrinth",
+        "Account Modrinth disconnesso",
+        "local",
+    );
+    Ok(Json(st))
+}
+
+pub async fn modrinth_personal_projects(
+    State(state): State<AppState>,
+    _auth: AuthUser,
+) -> Result<Json<Vec<ModrinthHit>>, (StatusCode, String)> {
+    let hits = modrinth::list_personal_projects(&state.db, &state.http)
         .await
         .map_err(|e| (StatusCode::BAD_GATEWAY, e))?;
     Ok(Json(hits))
@@ -467,6 +536,9 @@ pub async fn search_mods(
 pub struct InstallModReq {
     pub project_id: String,
     pub folder: Option<String>,
+    pub mc_version: Option<String>,
+    pub loader: Option<String>,
+    pub version_id: Option<String>,
 }
 
 pub async fn install_mod(
@@ -485,9 +557,32 @@ pub async fn install_mod(
     let folder = req.folder.unwrap_or(default_folder);
     let target_dir = PathBuf::from(&inst.work_dir).join(&folder);
 
-    let installed = modrinth::install_modrinth_project(&state.http, &req.project_id, &target_dir)
-        .await
-        .map_err(|e| (StatusCode::BAD_GATEWAY, e))?;
+    let mc_ver = req
+        .mc_version
+        .or_else(|| inst.settings.get("mc_version").cloned());
+    let loader = req
+        .loader
+        .or_else(|| inst.settings.get("mc_loader").cloned());
+
+    let m_auth = modrinth::load_auth_config(&state.db);
+    let token = if m_auth.connected && !m_auth.token.is_empty() {
+        Some(m_auth.token.as_str())
+    } else {
+        None
+    };
+
+    let installed = modrinth::install_modrinth_project(
+        &state.http,
+        &req.project_id,
+        &target_dir,
+        mc_ver.as_deref(),
+        loader.as_deref(),
+        &folder,
+        req.version_id.as_deref(),
+        token,
+    )
+    .await
+    .map_err(|e| (StatusCode::BAD_GATEWAY, e))?;
 
     state.db.log_audit(
         &auth.0.username,
@@ -618,15 +713,87 @@ pub async fn list_installed_mods(
         .load_instance(&id)
         .ok_or((StatusCode::NOT_FOUND, "Istanza non trovata".into()))?;
     let folder = sanitize_mod_folder(&q.folder);
+    let mc_ver = inst.settings.get("mc_version").map(|s| s.as_str());
+    let loader = inst.settings.get("mc_loader").map(|s| s.as_str());
+    let m_auth = modrinth::load_auth_config(&state.db);
+    let token = if m_auth.connected && !m_auth.token.is_empty() {
+        Some(m_auth.token.as_str())
+    } else {
+        None
+    };
+
     let list = modrinth::scan_installed_mods(
         &state.http,
         &PathBuf::from(&inst.work_dir),
         &folder,
         q.check_updates,
+        mc_ver,
+        loader,
+        token,
     )
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
     Ok(Json(list))
+}
+
+pub async fn upload_personal_mod(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Path(id): Path<String>,
+    mut multipart: axum::extract::Multipart,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    if !auth.can_access_instance(&id) {
+        return Err((StatusCode::FORBIDDEN, "Accesso negato".into()));
+    }
+    let inst = state
+        .pm
+        .load_instance(&id)
+        .ok_or((StatusCode::NOT_FOUND, "Istanza non trovata".into()))?;
+
+    let mut folder = "mods".to_string();
+    let mut uploaded: Vec<String> = Vec::new();
+
+    while let Ok(Some(field)) = multipart.next_field().await {
+        let field_name = field.name().unwrap_or("").to_string();
+        if field_name == "folder" {
+            if let Ok(txt) = field.text().await {
+                folder = sanitize_mod_folder(&txt);
+            }
+            continue;
+        }
+        let raw_filename = field.file_name().unwrap_or("custom-mod.jar").to_string();
+        let clean_name = std::path::Path::new(&raw_filename)
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("custom-mod.jar")
+            .to_string();
+        if clean_name.contains("..") {
+            continue;
+        }
+        let data = field
+            .bytes()
+            .await
+            .map_err(|e| (StatusCode::BAD_REQUEST, format!("Errore upload file: {}", e)))?;
+        let target_dir = PathBuf::from(&inst.work_dir).join(&folder);
+        std::fs::create_dir_all(&target_dir)
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        std::fs::write(target_dir.join(&clean_name), &data)
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        uploaded.push(clean_name);
+    }
+
+    state.db.log_audit(
+        &auth.0.username,
+        "MOD_PERSONAL_UPLOAD",
+        &inst.name,
+        &format!("Caricate {} mod personali in {}/: {:?}", uploaded.len(), folder, uploaded),
+        "local",
+    );
+
+    Ok(Json(serde_json::json!({
+        "uploaded": uploaded,
+        "folder": folder
+    })))
 }
 
 #[derive(Deserialize)]
@@ -740,13 +907,29 @@ pub async fn update_installed_mods(
         .ok_or((StatusCode::NOT_FOUND, "Istanza non trovata".into()))?;
     let folder = sanitize_mod_folder(&req.folder);
     let work_dir = PathBuf::from(&inst.work_dir);
+    let mc_ver = inst.settings.get("mc_version").map(|s| s.as_str());
+    let loader = inst.settings.get("mc_loader").map(|s| s.as_str());
+    let m_auth = modrinth::load_auth_config(&state.db);
+    let token = if m_auth.connected && !m_auth.token.is_empty() {
+        Some(m_auth.token.as_str())
+    } else {
+        None
+    };
 
     let mut updated_files: Vec<String> = Vec::new();
 
     if req.update_all {
-        let scanned = modrinth::scan_installed_mods(&state.http, &work_dir, &folder, true)
-            .await
-            .map_err(|e| (StatusCode::BAD_GATEWAY, e))?;
+        let scanned = modrinth::scan_installed_mods(
+            &state.http,
+            &work_dir,
+            &folder,
+            true,
+            mc_ver,
+            loader,
+            token,
+        )
+        .await
+        .map_err(|e| (StatusCode::BAD_GATEWAY, e))?;
         for m in scanned {
             if m.update_available {
                 if let (Some(url), Some(new_fn)) = (m.latest_url, m.latest_filename) {
@@ -757,6 +940,7 @@ pub async fn update_installed_mods(
                         &m.filename,
                         &url,
                         &new_fn,
+                        token,
                     )
                     .await
                     {
@@ -775,6 +959,7 @@ pub async fn update_installed_mods(
             &old_fn,
             &url,
             &new_fn,
+            token,
         )
         .await
         .map_err(|e| (StatusCode::BAD_GATEWAY, e))?;

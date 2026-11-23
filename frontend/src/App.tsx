@@ -237,7 +237,7 @@ export function App() {
           <div className="brand-info">
             <span className="brand-name">{settings?.panel_name || 'GOLDSMP'}</span>
             <span className="brand-sub">
-              v{updateStatus?.active_ui_version || sysInfo?.panel_version || '1.7.0'} • ADS Rust
+              v{updateStatus?.active_ui_version || sysInfo?.panel_version || '1.8.0'} • ADS Rust
             </span>
           </div>
         </div>

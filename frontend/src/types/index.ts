@@ -225,6 +225,14 @@ export interface ModrinthHit {
   icon_url?: string;
   project_type: string;
   categories: string[];
+  status?: string;
+}
+
+export interface ModrinthAuthStatus {
+  connected: boolean;
+  user_id: string;
+  username: string;
+  avatar_url?: string;
 }
 
 export interface UpdaterConfig {

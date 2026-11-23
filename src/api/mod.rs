@@ -164,9 +164,14 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/gdrive/auth-url", get(ops_routes::gdrive_auth_url))
         .route("/api/gdrive/callback", get(ops_routes::gdrive_callback))
         .route("/api/gdrive/disconnect", post(ops_routes::gdrive_disconnect))
-        // Modrinth Store & Installed Mods Folder Manager / Auto-Updater
+        // Modrinth Store, Personal Account Login & Installed Mods Folder Manager / Auto-Updater
         .route("/api/mods/search", get(ops_routes::search_mods))
+        .route("/api/modrinth/auth/status", get(ops_routes::modrinth_auth_status))
+        .route("/api/modrinth/auth/login", post(ops_routes::modrinth_login))
+        .route("/api/modrinth/auth/logout", post(ops_routes::modrinth_logout))
+        .route("/api/modrinth/projects/personal", get(ops_routes::modrinth_personal_projects))
         .route("/api/instances/:id/mods/install", post(ops_routes::install_mod))
+        .route("/api/instances/:id/mods/upload", post(ops_routes::upload_personal_mod))
         .route(
             "/api/instances/:id/mods/installed",
             get(ops_routes::list_installed_mods).delete(ops_routes::delete_installed_mod),

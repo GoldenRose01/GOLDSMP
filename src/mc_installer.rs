@@ -86,7 +86,7 @@ pub async fn get_loader_versions(
         }
         _ => {
             let j: serde_json::Value = http
-                .get("https://api.papermc.io/v2/projects/paper")
+                .get("https://fill.papermc.io/v3/projects/paper")
                 .header("User-Agent", "GOLDSMP/1.0")
                 .send()
                 .await
@@ -94,19 +94,66 @@ pub async fn get_loader_versions(
                 .json()
                 .await
                 .map_err(|e| e.to_string())?;
-            let mut list: Vec<String> = j
-                .get("versions")
-                .and_then(|v| v.as_array())
-                .map(|arr| {
-                    arr.iter()
-                        .filter_map(|x| x.as_str().map(|s| s.to_string()))
-                        .collect()
-                })
-                .unwrap_or_default();
-            list.reverse();
+            let list = extract_paper_v3_versions(&j);
             Ok(list)
         }
     }
+}
+
+fn is_stable_mc_version(v: &str) -> bool {
+    let lower = v.to_lowercase();
+    !lower.contains("-rc")
+        && !lower.contains("-pre")
+        && !lower.contains("snapshot")
+        && !lower.contains('w')
+}
+
+fn extract_paper_v3_versions(j: &serde_json::Value) -> Vec<String> {
+    let mut all = Vec::new();
+    if let Some(obj) = j.get("versions").and_then(|v| v.as_object()) {
+        for (_major, arr_val) in obj {
+            if let Some(arr) = arr_val.as_array() {
+                for item in arr {
+                    if let Some(s) = item.as_str() {
+                        if is_stable_mc_version(s) && !all.contains(&s.to_string()) {
+                            all.push(s.to_string());
+                        }
+                    }
+                }
+            }
+        }
+    } else if let Some(arr) = j.get("versions").and_then(|v| v.as_array()) {
+        for item in arr {
+            if let Some(s) = item.as_str() {
+                if is_stable_mc_version(s) {
+                    all.push(s.to_string());
+                }
+            }
+        }
+    }
+    all.sort_by(|a, b| compare_mc_ver(b, a));
+    all
+}
+
+fn compare_mc_ver(a: &str, b: &str) -> std::cmp::Ordering {
+    let parse = |s: &str| -> Vec<u64> {
+        s.split(|c: char| !c.is_ascii_digit())
+            .filter(|p| !p.is_empty())
+            .filter_map(|p| p.parse::<u64>().ok())
+            .collect()
+    };
+    let va = parse(a);
+    let vb = parse(b);
+    let len = va.len().max(vb.len());
+    for i in 0..len {
+        let pa = *va.get(i).unwrap_or(&0);
+        let pb = *vb.get(i).unwrap_or(&0);
+        match pa.cmp(&pb) {
+            std::cmp::Ordering::Equal => continue,
+            ord => return ord,
+        }
+    }
+    std::cmp::Ordering::Equal
 }
 
 /// Automatically downloads `server.jar` into `work_dir` for the chosen loader (`paper`, `purpur`, `fabric`, `vanilla`)
@@ -146,78 +193,61 @@ async fn download_paper(
     http: &reqwest::Client,
     requested_version: &str,
 ) -> Result<(Vec<u8>, String, String), String> {
-    // 1. Resolve version from PaperMC API v2
+    // 1. Resolve version from PaperMC Fill API v3
     let proj_json: serde_json::Value = http
-        .get("https://api.papermc.io/v2/projects/paper")
+        .get("https://fill.papermc.io/v3/projects/paper")
         .header("User-Agent", "GOLDSMP/1.0")
         .send()
         .await
-        .map_err(|e| format!("Errore connessione PaperMC API: {}", e))?
+        .map_err(|e| format!("Errore connessione PaperMC API v3: {}", e))?
         .json()
         .await
-        .map_err(|e| format!("Errore risposta PaperMC: {}", e))?;
+        .map_err(|e| format!("Errore risposta PaperMC v3: {}", e))?;
 
-    let versions = proj_json
-        .get("versions")
-        .and_then(|v| v.as_array())
-        .ok_or_else(|| "Lista versioni PaperMC non trovata".to_string())?;
+    let versions = extract_paper_v3_versions(&proj_json);
 
     let ver = if requested_version.is_empty()
         || requested_version.eq_ignore_ascii_case("latest")
-        || !versions
-            .iter()
-            .any(|v| v.as_str() == Some(requested_version))
+        || !versions.iter().any(|v| v == requested_version)
     {
         versions
-            .last()
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| "Nessuna versione PaperMC disponibile".to_string())?
-            .to_string()
+            .first()
+            .cloned()
+            .unwrap_or_else(|| "26.3".to_string())
     } else {
         requested_version.to_string()
     };
 
-    // 2. Get latest build for resolved version
-    let builds_url = format!(
-        "https://api.papermc.io/v2/projects/paper/versions/{}/builds",
+    // 2. Get latest build for resolved version from PaperMC Fill v3
+    let latest_build_url = format!(
+        "https://fill.papermc.io/v3/projects/paper/versions/{}/builds/latest",
         ver
     );
-    let builds_json: serde_json::Value = http
-        .get(&builds_url)
+    let build_json: serde_json::Value = http
+        .get(&latest_build_url)
         .header("User-Agent", "GOLDSMP/1.0")
         .send()
         .await
-        .map_err(|e| format!("Errore fetch build PaperMC: {}", e))?
+        .map_err(|e| format!("Errore fetch build PaperMC v3: {}", e))?
         .json()
         .await
-        .map_err(|e| format!("Errore parsing build PaperMC: {}", e))?;
+        .map_err(|e| format!("Errore parsing build PaperMC v3: {}", e))?;
 
-    let latest_build = builds_json
-        .get("builds")
-        .and_then(|b| b.as_array())
-        .and_then(|arr| arr.last())
-        .ok_or_else(|| format!("Nessuna build Paper trovata per {}", ver))?;
-
-    let build_num = latest_build
-        .get("build")
+    let build_num = build_json
+        .get("id")
         .and_then(|b| b.as_i64())
-        .ok_or_else(|| "Numero build Paper non valido".to_string())?;
+        .or_else(|| build_json.get("build").and_then(|b| b.as_i64()))
+        .unwrap_or(1);
 
-    let download_name = latest_build
+    let jar_url = build_json
         .get("downloads")
-        .and_then(|d| d.get("application"))
-        .and_then(|a| a.get("name"))
-        .and_then(|n| n.as_str())
-        .map(|s| s.to_string())
-        .unwrap_or_else(|| format!("paper-{}-{}.jar", ver, build_num));
-
-    let jar_url = format!(
-        "https://api.papermc.io/v2/projects/paper/versions/{}/builds/{}/downloads/{}",
-        ver, build_num, download_name
-    );
+        .and_then(|d| d.get("server:default"))
+        .and_then(|s| s.get("url"))
+        .and_then(|u| u.as_str())
+        .ok_or_else(|| format!("URL download PaperMC v3 non trovato per {}", ver))?;
 
     let bytes = http
-        .get(&jar_url)
+        .get(jar_url)
         .header("User-Agent", "GOLDSMP/1.0")
         .send()
         .await

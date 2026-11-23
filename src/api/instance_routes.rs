@@ -137,6 +137,8 @@ pub async fn create_instance(
             crate::mc_installer::download_minecraft_server_jar(&state.http, &work_dir, &loader, &ver)
                 .await
         {
+            settings.insert("mc_loader".into(), res.loader.clone());
+            settings.insert("mc_version".into(), res.mc_version.clone());
             tracing::info!(
                 "Auto-scaricato server.jar per '{}': {} {} ({})",
                 req.name,
@@ -320,7 +322,7 @@ pub async fn start_instance(
     Path(id): Path<String>,
 ) -> Result<Json<Instance>, (StatusCode, String)> {
     // Before starting a Minecraft Java instance, ensure server.jar exists (auto-download if missing!)
-    if let Some(inst) = state.pm.load_instance(&id) {
+    if let Some(mut inst) = state.pm.load_instance(&id) {
         let wd = PathBuf::from(&inst.work_dir);
         if inst.template_id == "minecraft-java" && !wd.join("server.jar").exists() {
             let loader = inst
@@ -333,13 +335,26 @@ pub async fn start_instance(
                 .get("mc_version")
                 .cloned()
                 .unwrap_or_else(|| "latest".into());
-            let _ = crate::mc_installer::download_minecraft_server_jar(
+            let res = crate::mc_installer::download_minecraft_server_jar(
                 &state.http,
                 &wd,
                 &loader,
                 &ver,
             )
-            .await;
+            .await
+            .map_err(|e| {
+                (
+                    StatusCode::BAD_GATEWAY,
+                    format!("Impossibile scaricare server.jar ({}): {}", loader, e),
+                )
+            })?;
+            inst.settings.insert("mc_loader".into(), res.loader);
+            inst.settings.insert("mc_version".into(), res.mc_version);
+            let conn = state.db.conn();
+            let _ = conn.execute(
+                "UPDATE instances SET settings_json = ?1 WHERE id = ?2",
+                params![serde_json::to_string(&inst.settings).unwrap(), id],
+            );
         }
     }
 

@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { api, consoleWsUrl, formatBytes, formatDuration } from '../api/client';
+import { api, consoleWsUrl, formatBytes, formatDuration, getToken } from '../api/client';
 import {
   AppTemplate,
   BackupEntry,
@@ -11,6 +11,7 @@ import {
   Instance,
   McLoaderStatus,
   MetricPoint,
+  ModrinthAuthStatus,
   ModrinthHit,
   ScheduledTask,
   User,
@@ -137,15 +138,21 @@ export const InstanceDetailPage: React.FC<InstanceDetailPageProps> = ({
   const [dlUrl, setDlUrl] = useState('');
   const [dlName, setDlName] = useState('');
 
-  // Mods state
+  // Mods state (MC Version filtering + Modrinth Account Login + Personal Mods Upload)
   const [modQuery, setModQuery] = useState('');
   const [modType, setModType] = useState('mod');
+  const [modMcVersionFilter, setModMcVersionFilter] = useState<string>('');
   const [modHits, setModHits] = useState<ModrinthHit[]>([]);
   const [modLoading, setModLoading] = useState(false);
   const [modsFolder, setModsFolder] = useState<'mods' | 'plugins'>('mods');
   const [installedMods, setInstalledMods] = useState<InstalledModEntry[]>([]);
   const [modsScanning, setModsScanning] = useState(false);
   const [modsUpdating, setModsUpdating] = useState(false);
+  const [modrinthAuth, setModrinthAuth] = useState<ModrinthAuthStatus | null>(null);
+  const [modrinthTokenInput, setModrinthTokenInput] = useState('');
+  const [personalProjects, setPersonalProjects] = useState<ModrinthHit[]>([]);
+  const [uploadingModFile, setUploadingModFile] = useState(false);
+  const modFileInputRef = useRef<HTMLInputElement | null>(null);
 
   // Backups & Google Drive state
   const [backups, setBackups] = useState<BackupEntry[]>([]);
@@ -211,6 +218,16 @@ export const InstanceDetailPage: React.FC<InstanceDetailPageProps> = ({
           .join('\n')
       );
       setCfgSettings(inst.settings || {});
+      if (inst.settings?.['mc_version'] && inst.settings['mc_version'] !== 'latest') {
+        setModMcVersionFilter(inst.settings['mc_version']);
+      }
+      if ((inst.settings?.['mc_loader'] || 'paper') === 'fabric') {
+        setModType('mod');
+        setModsFolder('mods');
+      } else if (inst.template_id === 'minecraft-java') {
+        setModType('plugin');
+        setModsFolder('plugins');
+      }
     }
   }, [inst]);
 
@@ -256,9 +273,54 @@ export const InstanceDetailPage: React.FC<InstanceDetailPageProps> = ({
     if (tab === 'scheduler') loadTasks();
     if (tab === 'mods') {
       loadInstalledMods(modsFolder, false);
+      loadModrinthAuth();
       if (modHits.length === 0) searchMods();
     }
   }, [tab, curPath, modsFolder]);
+
+  const loadModrinthAuth = async () => {
+    try {
+      const st = await api<ModrinthAuthStatus>('/api/modrinth/auth/status');
+      setModrinthAuth(st);
+      if (st.connected) {
+        const projs = await api<ModrinthHit[]>('/api/modrinth/projects/personal').catch(() => []);
+        setPersonalProjects(projs);
+      } else {
+        setPersonalProjects([]);
+      }
+    } catch {}
+  };
+
+  const handleUploadPersonalModFiles = async (fileList: FileList | null) => {
+    if (!fileList || fileList.length === 0) return;
+    setUploadingModFile(true);
+    try {
+      const fd = new FormData();
+      fd.append('folder', modsFolder);
+      for (let i = 0; i < fileList.length; i++) {
+        fd.append('file', fileList[i]);
+      }
+      const token = getToken();
+      const res = await fetch(`/api/instances/${instanceId}/mods/upload`, {
+        method: 'POST',
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        body: fd,
+      });
+      if (!res.ok) {
+        throw new Error(await res.text());
+      }
+      const data = await res.json();
+      onNotify(
+        `Caricate ${data.uploaded?.length || 1} mod personali in /${data.folder || modsFolder}!`
+      );
+      await loadInstalledMods(modsFolder, false);
+    } catch (err: any) {
+      onNotify(`Errore caricamento mod personale: ${err.message}`);
+    } finally {
+      setUploadingModFile(false);
+      if (modFileInputRef.current) modFileInputRef.current.value = '';
+    }
+  };
 
   const loadLoaderInfo = async (overrideLoader?: string) => {
     try {
@@ -270,6 +332,9 @@ export const InstanceDetailPage: React.FC<InstanceDetailPageProps> = ({
       if (!overrideLoader) {
         setLoaderPick(info.active_loader || 'paper');
         setVersionPick(info.active_version || info.available_versions[0] || 'latest');
+        if (info.active_version && info.active_version !== 'latest' && !modMcVersionFilter) {
+          setModMcVersionFilter(info.active_version);
+        }
       }
     } catch {}
   };
@@ -285,8 +350,8 @@ export const InstanceDetailPage: React.FC<InstanceDetailPageProps> = ({
         const outdated = list.filter((m) => m.update_available).length;
         onNotify(
           outdated > 0
-            ? `Modrinth: trovati ${outdated} aggiornamenti disponibili in ${folder}/!`
-            : `Tutte le mod in ${folder}/ risultano aggiornate su Modrinth.`
+            ? `Modrinth: trovati ${outdated} aggiornamenti stabili (MC ${inst?.settings?.['mc_version'] || 'latest'}) in ${folder}/!`
+            : `Tutte le mod in ${folder}/ risultano aggiornate per la versione MC del server.`
         );
       }
     } catch (err: any) {
@@ -342,11 +407,19 @@ export const InstanceDetailPage: React.FC<InstanceDetailPageProps> = ({
     setTasks(list);
   };
 
-  const searchMods = async () => {
+  const searchMods = async (overrideMcVer?: string) => {
     setModLoading(true);
     try {
+      const verParam =
+        overrideMcVer !== undefined
+          ? overrideMcVer
+          : modMcVersionFilter || inst?.settings?.['mc_version'] || '';
+      const mcQuery =
+        verParam && verParam !== 'latest' && verParam !== 'all'
+          ? `&mc_version=${encodeURIComponent(verParam)}`
+          : '';
       const hits = await api<ModrinthHit[]>(
-        `/api/mods/search?q=${encodeURIComponent(modQuery)}&project_type=${modType}`
+        `/api/mods/search?q=${encodeURIComponent(modQuery)}&project_type=${modType}${mcQuery}`
       );
       setModHits(hits);
     } catch (err: any) {
@@ -701,6 +774,78 @@ export const InstanceDetailPage: React.FC<InstanceDetailPageProps> = ({
                 </div>
               </div>
             </div>
+
+            {/* Automatic getsockopt / Port / JAR Diagnostics for Minecraft */}
+            {(inst.category === 'minecraft' || inst.category === 'horizon') && (
+              <div
+                style={{
+                  marginTop: 12,
+                  paddingTop: 10,
+                  borderTop: '1px solid var(--border-subtle)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  gap: 12,
+                  flexWrap: 'wrap',
+                  fontSize: 12.5,
+                }}
+              >
+                {inst.port < 25560 || inst.port > 25569 ? (
+                  <div style={{ color: 'var(--warning)', display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                    <AlertTriangle size={15} />
+                    <span>
+                      <strong>Attenzione (Errore getsockopt / Connection Refused):</strong> la porta{' '}
+                      <code>{inst.port}</code> è fuori dal range <code>25560–25569</code> aperto sul tuo router!
+                    </span>
+                    <button
+                      type="button"
+                      className="btn btn-primary btn-sm"
+                      onClick={async () => {
+                        try {
+                          await api(`/api/instances/${instanceId}`, {
+                            method: 'PUT',
+                            body: JSON.stringify({ port: 25565 }),
+                          });
+                          onNotify('Porta impostata a 25565 (server.properties aggiornato)! Riavvia il server.');
+                          loadInstance();
+                          onRefreshInstances();
+                        } catch (err: any) {
+                          onNotify(err.message);
+                        }
+                      }}
+                    >
+                      Imposta Porta 25565 Ora
+                    </button>
+                  </div>
+                ) : inst.template_id === 'minecraft-java' && loaderStatus && !loaderStatus.jar_exists ? (
+                  <div style={{ color: 'var(--danger)', display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                    <AlertTriangle size={15} />
+                    <span>
+                      <strong>File server.jar mancante:</strong> vai nella tab{' '}
+                      <strong>Loader &amp; Versione</strong> o premi <strong>Avvia</strong> per scaricarlo automaticamente.
+                    </span>
+                    <button
+                      type="button"
+                      className="btn btn-primary btn-sm"
+                      onClick={() => setTab('loader')}
+                    >
+                      Scarica server.jar
+                    </button>
+                  </div>
+                ) : (
+                  <div style={{ color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                    <span>
+                      Porta <code>{inst.port}</code> nel range router <code>25560–25569</code>.{' '}
+                      {inst.status !== 'running'
+                        ? 'Il server è spento: premi Avvia e attendi "Done (...)!" in Console prima di entrare (altrimenti Minecraft mostra getsockopt).'
+                        : 'Se dalla stessa rete di casa ricevi getsockopt col dominio DuckDNS, entra usando l\'IP LAN locale del server (es. 192.168.1.x:' +
+                          inst.port +
+                          ').'}
+                    </span>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
 
           <div className="grid-4">
@@ -2117,9 +2262,226 @@ export const InstanceDetailPage: React.FC<InstanceDetailPageProps> = ({
         </div>
       )}
 
-      {/* TAB 5: INSTALLED MODS FOLDER MANAGER + MODRINTH AUTO-UPDATER + STORE */}
+      {/* TAB 5: INSTALLED MODS FOLDER MANAGER + MODRINTH ACCOUNT LOGIN + MC-VERSION STORE */}
       {tab === 'mods' && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+          {/* Modrinth Account Login + Personal & Private Mods + Direct Local Upload */}
+          <div
+            className="card"
+            style={{
+              border: '1px solid rgba(56, 189, 248, 0.35)',
+              background:
+                'linear-gradient(135deg, rgba(16, 185, 129, 0.08) 0%, rgba(15, 15, 22, 0.96) 70%)',
+            }}
+          >
+            <div className="card-header" style={{ flexWrap: 'wrap' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                <KeyRound size={18} color="var(--success)" />
+                <span className="card-title">
+                  Account Modrinth & Mod Personali / Private
+                </span>
+                <span
+                  className={`status-badge ${
+                    modrinthAuth?.connected ? 'status-running' : 'status-stopped'
+                  }`}
+                >
+                  <span className="status-dot" />
+                  {modrinthAuth?.connected
+                    ? `Connesso come ${modrinthAuth.username}`
+                    : 'Non autenticato'}
+                </span>
+              </div>
+
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+                <input
+                  ref={modFileInputRef}
+                  type="file"
+                  multiple
+                  accept=".jar,.hmod,.disabled"
+                  style={{ display: 'none' }}
+                  onChange={(e) => handleUploadPersonalModFiles(e.target.files)}
+                />
+                <button
+                  type="button"
+                  className="btn btn-primary btn-sm"
+                  disabled={uploadingModFile}
+                  onClick={() => modFileInputRef.current?.click()}
+                >
+                  <Plus size={14} />{' '}
+                  {uploadingModFile
+                    ? 'Caricamento...'
+                    : `Carica File Mod Personale (.jar) in /${modsFolder}`}
+                </button>
+                {modrinthAuth?.connected && (
+                  <button
+                    type="button"
+                    className="btn btn-danger btn-sm"
+                    onClick={async () => {
+                      const st = await api<ModrinthAuthStatus>('/api/modrinth/auth/logout', {
+                        method: 'POST',
+                      });
+                      setModrinthAuth(st);
+                      setPersonalProjects([]);
+                      onNotify('Account Modrinth disconnesso');
+                    }}
+                  >
+                    Disconnetti Modrinth
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {!modrinthAuth?.connected ? (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                <p style={{ fontSize: 12.5, color: 'var(--text-secondary)' }}>
+                  Effettua il login con il tuo <strong>Personal Access Token (PAT) di Modrinth</strong> (crealo da{' '}
+                  <a
+                    href="https://modrinth.com/settings/pats"
+                    target="_blank"
+                    rel="noreferrer"
+                    style={{ color: 'var(--accent)', textDecoration: 'underline' }}
+                  >
+                    modrinth.com/settings/pats
+                  </a>
+                  ) per visualizzare e installare con 1 click le tue <strong>mod personali, bozze, non in elenco o private</strong>, oppure carica direttamente un file <code>.jar</code> dal tuo PC col pulsante qui sopra.
+                </p>
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                  <input
+                    type="password"
+                    style={{ flex: 1, minWidth: 280 }}
+                    placeholder="Incolla Token Modrinth (es. mrp_...)"
+                    value={modrinthTokenInput}
+                    onChange={(e) => setModrinthTokenInput(e.target.value)}
+                  />
+                  <button
+                    type="button"
+                    className="btn btn-primary btn-sm"
+                    onClick={async () => {
+                      if (!modrinthTokenInput.trim()) return;
+                      try {
+                        const st = await api<ModrinthAuthStatus>('/api/modrinth/auth/login', {
+                          method: 'POST',
+                          body: JSON.stringify({ token: modrinthTokenInput.trim() }),
+                        });
+                        setModrinthAuth(st);
+                        setModrinthTokenInput('');
+                        onNotify(`Login Modrinth effettuato come ${st.username}!`);
+                        loadModrinthAuth();
+                      } catch (err: any) {
+                        onNotify(err.message);
+                      }
+                    }}
+                  >
+                    <KeyRound size={14} /> Login su Modrinth
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div>
+                <div
+                  style={{
+                    fontSize: 12.5,
+                    color: 'var(--text-secondary)',
+                    marginBottom: personalProjects.length > 0 ? 12 : 0,
+                  }}
+                >
+                  Accesso autenticato attivo per <strong>{modrinthAuth.username}</strong> — trovate{' '}
+                  <strong>{personalProjects.length}</strong> mod/progetti personali sul tuo account Modrinth (inclusi progetti privati, bozze o non pubblici):
+                </div>
+                {personalProjects.length > 0 && (
+                  <div className="grid-2">
+                    {personalProjects.map((p) => (
+                      <div
+                        key={p.project_id}
+                        style={{
+                          display: 'flex',
+                          gap: 12,
+                          padding: 12,
+                          borderRadius: 'var(--radius-sm)',
+                          background: 'var(--bg-input)',
+                          border: '1px solid var(--border-strong)',
+                          alignItems: 'center',
+                        }}
+                      >
+                        {p.icon_url ? (
+                          <img
+                            src={p.icon_url}
+                            alt={p.title}
+                            style={{ width: 42, height: 42, borderRadius: 8, objectFit: 'cover' }}
+                          />
+                        ) : (
+                          <div className="instance-icon-box">
+                            <Package size={18} />
+                          </div>
+                        )}
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                            <span style={{ fontWeight: 700, fontSize: 13.5, color: '#fff4d2' }}>
+                              {p.title}
+                            </span>
+                            {p.status && (
+                              <span
+                                style={{
+                                  fontSize: 10,
+                                  padding: '1px 6px',
+                                  borderRadius: 99,
+                                  background: 'rgba(245, 185, 50, 0.16)',
+                                  color: 'var(--accent)',
+                                  textTransform: 'uppercase',
+                                  fontFamily: 'var(--font-mono)',
+                                }}
+                              >
+                                {p.status}
+                              </span>
+                            )}
+                          </div>
+                          <div
+                            style={{
+                              fontSize: 12,
+                              color: 'var(--text-secondary)',
+                              whiteSpace: 'nowrap',
+                              overflow: 'hidden',
+                              textOverflow: 'ellipsis',
+                            }}
+                          >
+                            {p.description}
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          className="btn btn-primary btn-sm"
+                          onClick={async () => {
+                            try {
+                              const res = await api<{ installed: string; folder: string }>(
+                                `/api/instances/${instanceId}/mods/install`,
+                                {
+                                  method: 'POST',
+                                  body: JSON.stringify({
+                                    project_id: p.project_id,
+                                    folder: modsFolder,
+                                    mc_version:
+                                      modMcVersionFilter || inst.settings['mc_version'] || undefined,
+                                    loader: inst.settings['mc_loader'] || undefined,
+                                  }),
+                                }
+                              );
+                              onNotify(`Mod personale installata: ${res.installed}`);
+                              loadInstalledMods(modsFolder, false);
+                            } catch (err: any) {
+                              onNotify(`Errore installazione: ${err.message}`);
+                            }
+                          }}
+                        >
+                          <Download size={13} /> Installa in /{modsFolder}
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
           {/* Autonomous Installed Mods Folder Manager */}
           <div className="card">
             <div className="card-header" style={{ flexWrap: 'wrap' }}>
@@ -2144,6 +2506,20 @@ export const InstanceDetailPage: React.FC<InstanceDetailPageProps> = ({
                     /plugins
                   </button>
                 </div>
+                <span
+                  style={{
+                    fontSize: 11.5,
+                    fontFamily: 'var(--font-mono)',
+                    color: 'var(--arc-cyan)',
+                    padding: '2px 8px',
+                    borderRadius: 6,
+                    background: 'rgba(56, 189, 248, 0.1)',
+                    border: '1px solid rgba(56, 189, 248, 0.28)',
+                  }}
+                >
+                  Target Server: {(inst.settings['mc_loader'] || 'paper').toUpperCase()} • MC{' '}
+                  {modMcVersionFilter || inst.settings['mc_version'] || 'latest'} (No Snapshot)
+                </span>
               </div>
 
               <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
@@ -2156,7 +2532,7 @@ export const InstanceDetailPage: React.FC<InstanceDetailPageProps> = ({
                   <RotateCw size={14} />{' '}
                   {modsScanning
                     ? 'Verifica Modrinth (SHA-1)...'
-                    : 'Controlla Aggiornamenti Modrinth'}
+                    : 'Controlla Aggiornamenti Stabili'}
                 </button>
                 <button
                   type="button"
@@ -2174,8 +2550,8 @@ export const InstanceDetailPage: React.FC<InstanceDetailPageProps> = ({
                       );
                       onNotify(
                         res.updated_count > 0
-                          ? `Auto-Update completato: aggiornate ${res.updated_count} mod!`
-                          : 'Nessun aggiornamento da applicare su Modrinth.'
+                          ? `Auto-Update completato: aggiornate ${res.updated_count} mod per MC ${inst.settings['mc_version'] || 'stabile'}!`
+                          : 'Nessun aggiornamento stabile da applicare per la versione MC del server.'
                       );
                       await loadInstalledMods(modsFolder, true);
                     } catch (err: any) {
@@ -2192,9 +2568,8 @@ export const InstanceDetailPage: React.FC<InstanceDetailPageProps> = ({
             </div>
 
             <p style={{ fontSize: 12.5, color: 'var(--text-secondary)', marginBottom: 14 }}>
-              GOLDSMP legge automaticamente la cartella <code>/{modsFolder}</code> del server (file <code>.jar</code> e{' '}
-              <code>.hmod</code>), verifica gli hash <strong>SHA-1 su Modrinth</strong> per i server Minecraft Java e ti
-              permette di attivare, disattivare o aggiornare le mod con un solo click.
+              GOLDSMP legge automaticamente la cartella <code>/{modsFolder}</code>, verifica gli hash{' '}
+              <strong>SHA-1 su Modrinth</strong> e seleziona <strong>solo l&apos;ultima versione stabile compatibile con la versione Minecraft ({inst.settings['mc_version'] || 'stabile'}) e il loader ({inst.settings['mc_loader'] || 'paper'}) del server</strong>, ignorando le build per snapshot!
             </p>
 
             <div className="table-wrap">
@@ -2204,7 +2579,7 @@ export const InstanceDetailPage: React.FC<InstanceDetailPageProps> = ({
                     <th>File Mod</th>
                     <th>Dimensione</th>
                     <th>Stato</th>
-                    <th>Versione Modrinth</th>
+                    <th>Versione Modrinth (Filtro MC Server)</th>
                     <th style={{ textAlign: 'right' }}>Azioni</th>
                   </tr>
                 </thead>
@@ -2238,7 +2613,7 @@ export const InstanceDetailPage: React.FC<InstanceDetailPageProps> = ({
                           </span>
                         ) : (
                           <span style={{ color: 'var(--text-muted)' }}>
-                            Premi &quot;Controlla Aggiornamenti&quot;
+                            Mod personale o premi &quot;Controlla Aggiornamenti&quot;
                           </span>
                         )}
                       </td>
@@ -2302,7 +2677,7 @@ export const InstanceDetailPage: React.FC<InstanceDetailPageProps> = ({
                   {installedMods.length === 0 && (
                     <tr>
                       <td colSpan={5} style={{ textAlign: 'center', color: 'var(--text-muted)' }}>
-                        Nessuna mod trovata in <code>/{modsFolder}</code>. Installane una da Modrinth qui sotto oppure caricala via FTP!
+                        Nessuna mod trovata in <code>/{modsFolder}</code>. Installane una da Modrinth qui sotto, usa il pulsante &quot;Carica File Mod Personale&quot; o accedi al tuo account Modrinth!
                       </td>
                     </tr>
                   )}
@@ -2311,24 +2686,37 @@ export const InstanceDetailPage: React.FC<InstanceDetailPageProps> = ({
             </div>
           </div>
 
-          {/* Modrinth 1-Click Store */}
+          {/* Modrinth 1-Click Store with Minecraft Version Filter */}
           <div className="card">
             <div className="card-header" style={{ flexWrap: 'wrap' }}>
-              <span className="card-title">Store Mod & Plugin (Modrinth 1-Click)</span>
-              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              <span className="card-title">
+                Store Mod & Plugin (Modrinth 1-Click — Filtrato per Versione MC)
+              </span>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
                 <select value={modType} onChange={(e) => setModType(e.target.value)}>
                   <option value="mod">Mod (Fabric/Forge/NeoForge)</option>
                   <option value="plugin">Plugin (Paper/Spigot/Purpur)</option>
                   <option value="datapack">Datapack</option>
                 </select>
                 <input
+                  style={{ width: 135 }}
+                  placeholder="Versione MC (es. 26.3, 1.21.4)"
+                  title="Filtra le mod compatibili con la versione Minecraft del tuo server (evita snapshot)"
+                  value={modMcVersionFilter}
+                  onChange={(e) => setModMcVersionFilter(e.target.value)}
+                />
+                <input
                   placeholder="Cerca su Modrinth (es. Lithium, Essentials, LuckPerms)..."
                   value={modQuery}
                   onChange={(e) => setModQuery(e.target.value)}
                   onKeyDown={(e) => e.key === 'Enter' && searchMods()}
-                  style={{ minWidth: 260 }}
+                  style={{ minWidth: 240 }}
                 />
-                <button className="btn btn-primary btn-sm" onClick={searchMods} disabled={modLoading}>
+                <button
+                  className="btn btn-primary btn-sm"
+                  onClick={() => searchMods()}
+                  disabled={modLoading}
+                >
                   <Search size={14} /> {modLoading ? 'Ricerca...' : 'Cerca'}
                 </button>
               </div>
@@ -2388,6 +2776,9 @@ export const InstanceDetailPage: React.FC<InstanceDetailPageProps> = ({
                             body: JSON.stringify({
                               project_id: m.project_id,
                               folder: targetFolder,
+                              mc_version:
+                                modMcVersionFilter || inst.settings['mc_version'] || undefined,
+                              loader: inst.settings['mc_loader'] || undefined,
                             }),
                           }
                         );
@@ -2400,7 +2791,7 @@ export const InstanceDetailPage: React.FC<InstanceDetailPageProps> = ({
                       }
                     }}
                   >
-                    <Download size={13} /> Installa
+                    <Download size={13} /> Installa ({modMcVersionFilter || inst.settings['mc_version'] || 'Stabile'})
                   </button>
                 </div>
               ))}
