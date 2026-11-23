@@ -152,9 +152,15 @@ pub fn build_router(state: AppState) -> Router {
             "/api/instances/:id/backups/:backup_id",
             delete(ops_routes::delete_backup),
         )
-        // Modrinth Store
+        // Modrinth Store & Installed Mods Folder Manager / Auto-Updater
         .route("/api/mods/search", get(ops_routes::search_mods))
         .route("/api/instances/:id/mods/install", post(ops_routes::install_mod))
+        .route(
+            "/api/instances/:id/mods/installed",
+            get(ops_routes::list_installed_mods).delete(ops_routes::delete_installed_mod),
+        )
+        .route("/api/instances/:id/mods/toggle", post(ops_routes::toggle_installed_mod))
+        .route("/api/instances/:id/mods/update", post(ops_routes::update_installed_mods))
         // Analytics, Telemetry, Geo-Filtering & Audit
         .route("/api/analytics/metrics", get(analytics_routes::get_metrics))
         .route("/api/analytics/overview", get(analytics_routes::get_analytics_overview))

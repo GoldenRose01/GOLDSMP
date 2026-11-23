@@ -27,6 +27,7 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 futures = "0.3"
 walkdir = "2"
+sha1 = "0.10"
 
 [profile.release]
 opt-level = 3

@@ -519,3 +519,218 @@ pub async fn updater_config(
     Ok(Json(st))
 }
 
+// --- Installed Mods Folder Manager & Modrinth Auto-Updater ---
+
+#[derive(Deserialize)]
+pub struct InstalledModsQuery {
+    #[serde(default = "default_mods_folder")]
+    pub folder: String,
+    #[serde(default)]
+    pub check_updates: bool,
+}
+fn default_mods_folder() -> String {
+    "mods".into()
+}
+
+fn sanitize_mod_folder(folder: &str) -> String {
+    match folder {
+        "plugins" => "plugins".into(),
+        "behavior_packs" => "behavior_packs".into(),
+        _ => "mods".into(),
+    }
+}
+
+pub async fn list_installed_mods(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Path(id): Path<String>,
+    Query(q): Query<InstalledModsQuery>,
+) -> Result<Json<Vec<modrinth::InstalledModEntry>>, (StatusCode, String)> {
+    if !auth.can_access_instance(&id) {
+        return Err((StatusCode::FORBIDDEN, "Accesso negato".into()));
+    }
+    let inst = state
+        .pm
+        .load_instance(&id)
+        .ok_or((StatusCode::NOT_FOUND, "Istanza non trovata".into()))?;
+    let folder = sanitize_mod_folder(&q.folder);
+    let list = modrinth::scan_installed_mods(
+        &state.http,
+        &PathBuf::from(&inst.work_dir),
+        &folder,
+        q.check_updates,
+    )
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    Ok(Json(list))
+}
+
+#[derive(Deserialize)]
+pub struct ToggleModReq {
+    pub folder: String,
+    pub filename: String,
+}
+
+pub async fn toggle_installed_mod(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Path(id): Path<String>,
+    Json(req): Json<ToggleModReq>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    if !auth.can_access_instance(&id) {
+        return Err((StatusCode::FORBIDDEN, "Accesso negato".into()));
+    }
+    if req.filename.contains("..") || req.filename.contains('/') || req.filename.contains('\\') {
+        return Err((StatusCode::BAD_REQUEST, "Nome file non valido".into()));
+    }
+    let inst = state
+        .pm
+        .load_instance(&id)
+        .ok_or((StatusCode::NOT_FOUND, "Istanza non trovata".into()))?;
+    let folder = sanitize_mod_folder(&req.folder);
+    let dir = PathBuf::from(&inst.work_dir).join(&folder);
+    let src = dir.join(&req.filename);
+    if !src.exists() {
+        return Err((StatusCode::NOT_FOUND, "Mod non trovata".into()));
+    }
+    let new_name = if let Some(stripped) = req.filename.strip_suffix(".disabled") {
+        stripped.to_string()
+    } else {
+        format!("{}.disabled", req.filename)
+    };
+    let dst = dir.join(&new_name);
+    std::fs::rename(&src, &dst).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    state.db.log_audit(
+        &auth.0.username,
+        "MOD_TOGGLE",
+        &inst.name,
+        &format!("{} -> {}", req.filename, new_name),
+        "local",
+    );
+    Ok(Json(serde_json::json!({ "filename": new_name })))
+}
+
+#[derive(Deserialize)]
+pub struct DeleteModQuery {
+    #[serde(default = "default_mods_folder")]
+    pub folder: String,
+    pub filename: String,
+}
+
+pub async fn delete_installed_mod(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Path(id): Path<String>,
+    Query(q): Query<DeleteModQuery>,
+) -> Result<StatusCode, (StatusCode, String)> {
+    if !auth.can_access_instance(&id) {
+        return Err((StatusCode::FORBIDDEN, "Accesso negato".into()));
+    }
+    if q.filename.contains("..") || q.filename.contains('/') || q.filename.contains('\\') {
+        return Err((StatusCode::BAD_REQUEST, "Nome file non valido".into()));
+    }
+    let inst = state
+        .pm
+        .load_instance(&id)
+        .ok_or((StatusCode::NOT_FOUND, "Istanza non trovata".into()))?;
+    let folder = sanitize_mod_folder(&q.folder);
+    let target = PathBuf::from(&inst.work_dir).join(&folder).join(&q.filename);
+    if target.exists() {
+        std::fs::remove_file(&target)
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    }
+    state.db.log_audit(
+        &auth.0.username,
+        "MOD_DELETE",
+        &inst.name,
+        &format!("Rimossa {}/{}", folder, q.filename),
+        "local",
+    );
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[derive(Deserialize)]
+pub struct UpdateModReq {
+    #[serde(default = "default_mods_folder")]
+    pub folder: String,
+    pub filename: Option<String>,
+    pub download_url: Option<String>,
+    pub new_filename: Option<String>,
+    #[serde(default)]
+    pub update_all: bool,
+}
+
+pub async fn update_installed_mods(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Path(id): Path<String>,
+    Json(req): Json<UpdateModReq>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    if !auth.can_access_instance(&id) {
+        return Err((StatusCode::FORBIDDEN, "Accesso negato".into()));
+    }
+    let inst = state
+        .pm
+        .load_instance(&id)
+        .ok_or((StatusCode::NOT_FOUND, "Istanza non trovata".into()))?;
+    let folder = sanitize_mod_folder(&req.folder);
+    let work_dir = PathBuf::from(&inst.work_dir);
+
+    let mut updated_files: Vec<String> = Vec::new();
+
+    if req.update_all {
+        let scanned = modrinth::scan_installed_mods(&state.http, &work_dir, &folder, true)
+            .await
+            .map_err(|e| (StatusCode::BAD_GATEWAY, e))?;
+        for m in scanned {
+            if m.update_available {
+                if let (Some(url), Some(new_fn)) = (m.latest_url, m.latest_filename) {
+                    if let Ok(done) = modrinth::update_installed_mod(
+                        &state.http,
+                        &work_dir,
+                        &folder,
+                        &m.filename,
+                        &url,
+                        &new_fn,
+                    )
+                    .await
+                    {
+                        updated_files.push(done);
+                    }
+                }
+            }
+        }
+    } else if let (Some(old_fn), Some(url), Some(new_fn)) =
+        (req.filename, req.download_url, req.new_filename)
+    {
+        let done = modrinth::update_installed_mod(
+            &state.http,
+            &work_dir,
+            &folder,
+            &old_fn,
+            &url,
+            &new_fn,
+        )
+        .await
+        .map_err(|e| (StatusCode::BAD_GATEWAY, e))?;
+        updated_files.push(done);
+    } else {
+        return Err((StatusCode::BAD_REQUEST, "Parametri aggiornamento mancanti".into()));
+    }
+
+    state.db.log_audit(
+        &auth.0.username,
+        "MOD_AUTO_UPDATE",
+        &inst.name,
+        &format!("Aggiornate {} mod in {}/", updated_files.len(), folder),
+        "local",
+    );
+
+    Ok(Json(serde_json::json!({
+        "updated_count": updated_files.len(),
+        "updated_files": updated_files
+    })))
+}
+
+

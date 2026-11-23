@@ -258,4 +258,19 @@ export interface FtpInfo {
   quick_folders: string[];
 }
 
+export interface InstalledModEntry {
+  filename: string;
+  folder: string;
+  size_bytes: number;
+  enabled: boolean;
+  sha1: string;
+  modrinth_project_id?: string;
+  current_version?: string;
+  latest_version?: string;
+  latest_filename?: string;
+  latest_url?: string;
+  update_available: boolean;
+}
+
+
 

@@ -6,6 +6,7 @@ import {
   ConsoleLine,
   FileEntry,
   FtpInfo,
+  InstalledModEntry,
   Instance,
   MetricPoint,
   ModrinthHit,
@@ -124,9 +125,13 @@ export const InstanceDetailPage: React.FC<InstanceDetailPageProps> = ({
 
   // Mods state
   const [modQuery, setModQuery] = useState('');
-  const [modType, setModType] = useState('plugin');
+  const [modType, setModType] = useState('mod');
   const [modHits, setModHits] = useState<ModrinthHit[]>([]);
   const [modLoading, setModLoading] = useState(false);
+  const [modsFolder, setModsFolder] = useState<'mods' | 'plugins'>('mods');
+  const [installedMods, setInstalledMods] = useState<InstalledModEntry[]>([]);
+  const [modsScanning, setModsScanning] = useState(false);
+  const [modsUpdating, setModsUpdating] = useState(false);
 
   // Backups state
   const [backups, setBackups] = useState<BackupEntry[]>([]);
@@ -217,8 +222,33 @@ export const InstanceDetailPage: React.FC<InstanceDetailPageProps> = ({
     if (tab === 'access') loadPanelUsers();
     if (tab === 'backups') loadBackups();
     if (tab === 'scheduler') loadTasks();
-    if (tab === 'mods' && modHits.length === 0) searchMods();
-  }, [tab, curPath]);
+    if (tab === 'mods') {
+      loadInstalledMods(modsFolder, false);
+      if (modHits.length === 0) searchMods();
+    }
+  }, [tab, curPath, modsFolder]);
+
+  const loadInstalledMods = async (folder: string, checkUpdates: boolean) => {
+    setModsScanning(true);
+    try {
+      const list = await api<InstalledModEntry[]>(
+        `/api/instances/${instanceId}/mods/installed?folder=${encodeURIComponent(folder)}&check_updates=${checkUpdates ? 'true' : 'false'}`
+      );
+      setInstalledMods(list);
+      if (checkUpdates) {
+        const outdated = list.filter((m) => m.update_available).length;
+        onNotify(
+          outdated > 0
+            ? `Modrinth: trovati ${outdated} aggiornamenti disponibili in ${folder}/!`
+            : `Tutte le mod in ${folder}/ risultano aggiornate su Modrinth.`
+        );
+      }
+    } catch (err: any) {
+      onNotify(`Errore scansione mod: ${err.message}`);
+    } finally {
+      setModsScanning(false);
+    }
+  };
 
   const loadFtpInfo = async () => {
     try {
@@ -1644,96 +1674,294 @@ export const InstanceDetailPage: React.FC<InstanceDetailPageProps> = ({
         </div>
       )}
 
-      {/* TAB 5: MODRINTH STORE */}
+      {/* TAB 5: INSTALLED MODS FOLDER MANAGER + MODRINTH AUTO-UPDATER + STORE */}
       {tab === 'mods' && (
-        <div className="card">
-          <div className="card-header" style={{ flexWrap: 'wrap' }}>
-            <span className="card-title">Store Mod & Plugin (Modrinth 1-Click)</span>
-            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-              <select value={modType} onChange={(e) => setModType(e.target.value)}>
-                <option value="plugin">Plugin (Paper/Spigot)</option>
-                <option value="mod">Mod (Fabric/Forge)</option>
-                <option value="datapack">Datapack</option>
-              </select>
-              <input
-                placeholder="Cerca su Modrinth (es. Essentials, LuckPerms, Lithium)..."
-                value={modQuery}
-                onChange={(e) => setModQuery(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && searchMods()}
-                style={{ minWidth: 260 }}
-              />
-              <button className="btn btn-primary btn-sm" onClick={searchMods} disabled={modLoading}>
-                <Search size={14} /> {modLoading ? 'Ricerca...' : 'Cerca'}
-              </button>
-            </div>
-          </div>
-
-          <div className="grid-2">
-            {modHits.map((m) => (
-              <div
-                key={m.project_id}
-                style={{
-                  display: 'flex',
-                  gap: 12,
-                  padding: 12,
-                  borderRadius: 'var(--radius-sm)',
-                  background: 'var(--bg-input)',
-                  border: '1px solid var(--border-subtle)',
-                  alignItems: 'center',
-                }}
-              >
-                {m.icon_url ? (
-                  <img
-                    src={m.icon_url}
-                    alt={m.title}
-                    style={{ width: 44, height: 44, borderRadius: 8, objectFit: 'cover' }}
-                  />
-                ) : (
-                  <div className="instance-icon-box">
-                    <Package size={18} />
-                  </div>
-                )}
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontWeight: 600, fontSize: 13.5 }}>{m.title}</div>
-                  <div
-                    style={{
-                      fontSize: 12,
-                      color: 'var(--text-secondary)',
-                      whiteSpace: 'nowrap',
-                      overflow: 'hidden',
-                      textOverflow: 'ellipsis',
-                    }}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+          {/* Autonomous Installed Mods Folder Manager */}
+          <div className="card">
+            <div className="card-header" style={{ flexWrap: 'wrap' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                <Package size={18} color="var(--accent)" />
+                <span className="card-title">
+                  Cartella Mod Installate (/{modsFolder}) — {installedMods.length} file
+                </span>
+                <div className="pill-group">
+                  <button
+                    type="button"
+                    className={`pill-btn ${modsFolder === 'mods' ? 'active' : ''}`}
+                    onClick={() => setModsFolder('mods')}
                   >
-                    {m.description}
-                  </div>
-                  <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>
-                    by {m.author} • {m.downloads.toLocaleString()} download
-                  </div>
+                    /mods
+                  </button>
+                  <button
+                    type="button"
+                    className={`pill-btn ${modsFolder === 'plugins' ? 'active' : ''}`}
+                    onClick={() => setModsFolder('plugins')}
+                  >
+                    /plugins
+                  </button>
                 </div>
+              </div>
+
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                 <button
+                  type="button"
+                  className="btn btn-secondary btn-sm"
+                  disabled={modsScanning}
+                  onClick={() => loadInstalledMods(modsFolder, true)}
+                >
+                  <RotateCw size={14} />{' '}
+                  {modsScanning
+                    ? 'Verifica Modrinth (SHA-1)...'
+                    : 'Controlla Aggiornamenti Modrinth'}
+                </button>
+                <button
+                  type="button"
                   className="btn btn-primary btn-sm"
+                  disabled={modsUpdating || modsScanning}
                   onClick={async () => {
+                    setModsUpdating(true);
                     try {
-                      const res = await api<{ installed: string; folder: string }>(
-                        `/api/instances/${instanceId}/mods/install`,
+                      const res = await api<{ updated_count: number; updated_files: string[] }>(
+                        `/api/instances/${instanceId}/mods/update`,
                         {
                           method: 'POST',
-                          body: JSON.stringify({
-                            project_id: m.project_id,
-                            folder: modType === 'mod' ? 'mods' : 'plugins',
-                          }),
+                          body: JSON.stringify({ folder: modsFolder, update_all: true }),
                         }
                       );
-                      onNotify(`Installato ${res.installed} in ${res.folder}/`);
+                      onNotify(
+                        res.updated_count > 0
+                          ? `Auto-Update completato: aggiornate ${res.updated_count} mod!`
+                          : 'Nessun aggiornamento da applicare su Modrinth.'
+                      );
+                      await loadInstalledMods(modsFolder, true);
                     } catch (err: any) {
-                      onNotify(`Errore installazione: ${err.message}`);
+                      onNotify(`Errore auto-update: ${err.message}`);
+                    } finally {
+                      setModsUpdating(false);
                     }
                   }}
                 >
-                  <Download size={13} /> Installa
+                  <Download size={14} />{' '}
+                  {modsUpdating ? 'Aggiornamento...' : 'Auto-Aggiorna Tutte le Mod'}
                 </button>
               </div>
-            ))}
+            </div>
+
+            <p style={{ fontSize: 12.5, color: 'var(--text-secondary)', marginBottom: 14 }}>
+              GOLDSMP legge automaticamente la cartella <code>/{modsFolder}</code> del server (file <code>.jar</code> e{' '}
+              <code>.hmod</code>), verifica gli hash <strong>SHA-1 su Modrinth</strong> per i server Minecraft Java e ti
+              permette di attivare, disattivare o aggiornare le mod con un solo click.
+            </p>
+
+            <div className="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>File Mod</th>
+                    <th>Dimensione</th>
+                    <th>Stato</th>
+                    <th>Versione Modrinth</th>
+                    <th style={{ textAlign: 'right' }}>Azioni</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {installedMods.map((m) => (
+                    <tr key={m.filename}>
+                      <td style={{ fontFamily: 'var(--font-mono)', fontSize: 12.5, fontWeight: 600 }}>
+                        {m.filename}
+                      </td>
+                      <td style={{ fontFamily: 'var(--font-mono)', fontSize: 12 }}>
+                        {formatBytes(m.size_bytes)}
+                      </td>
+                      <td>
+                        <span
+                          className={`status-badge ${
+                            m.enabled ? 'status-running' : 'status-stopped'
+                          }`}
+                        >
+                          <span className="status-dot" />
+                          {m.enabled ? 'Attiva' : 'Disattiva'}
+                        </span>
+                      </td>
+                      <td style={{ fontFamily: 'var(--font-mono)', fontSize: 12 }}>
+                        {m.update_available ? (
+                          <span style={{ color: 'var(--accent-hover)', fontWeight: 700 }}>
+                            {m.current_version} → {m.latest_version} (Update!)
+                          </span>
+                        ) : m.current_version ? (
+                          <span style={{ color: 'var(--success)' }}>
+                            v{m.current_version} (Aggiornata)
+                          </span>
+                        ) : (
+                          <span style={{ color: 'var(--text-muted)' }}>
+                            Premi &quot;Controlla Aggiornamenti&quot;
+                          </span>
+                        )}
+                      </td>
+                      <td style={{ textAlign: 'right', display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
+                        {m.update_available && m.latest_url && m.latest_filename && (
+                          <button
+                            type="button"
+                            className="btn btn-primary btn-sm"
+                            onClick={async () => {
+                              try {
+                                await api(`/api/instances/${instanceId}/mods/update`, {
+                                  method: 'POST',
+                                  body: JSON.stringify({
+                                    folder: modsFolder,
+                                    filename: m.filename,
+                                    download_url: m.latest_url,
+                                    new_filename: m.latest_filename,
+                                    update_all: false,
+                                  }),
+                                });
+                                onNotify(`Aggiornata: ${m.latest_filename}`);
+                                loadInstalledMods(modsFolder, true);
+                              } catch (err: any) {
+                                onNotify(err.message);
+                              }
+                            }}
+                          >
+                            <Download size={12} /> Aggiorna
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          className="btn btn-secondary btn-sm"
+                          onClick={async () => {
+                            await api(`/api/instances/${instanceId}/mods/toggle`, {
+                              method: 'POST',
+                              body: JSON.stringify({ folder: modsFolder, filename: m.filename }),
+                            });
+                            loadInstalledMods(modsFolder, false);
+                          }}
+                        >
+                          {m.enabled ? 'Disattiva' : 'Attiva'}
+                        </button>
+                        <button
+                          type="button"
+                          className="btn btn-danger btn-sm"
+                          onClick={async () => {
+                            if (!confirm(`Eliminare ${m.filename}?`)) return;
+                            await api(
+                              `/api/instances/${instanceId}/mods/installed?folder=${encodeURIComponent(modsFolder)}&filename=${encodeURIComponent(m.filename)}`,
+                              { method: 'DELETE' }
+                            );
+                            loadInstalledMods(modsFolder, false);
+                          }}
+                        >
+                          <Trash2 size={13} />
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                  {installedMods.length === 0 && (
+                    <tr>
+                      <td colSpan={5} style={{ textAlign: 'center', color: 'var(--text-muted)' }}>
+                        Nessuna mod trovata in <code>/{modsFolder}</code>. Installane una da Modrinth qui sotto oppure caricala via FTP!
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* Modrinth 1-Click Store */}
+          <div className="card">
+            <div className="card-header" style={{ flexWrap: 'wrap' }}>
+              <span className="card-title">Store Mod & Plugin (Modrinth 1-Click)</span>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                <select value={modType} onChange={(e) => setModType(e.target.value)}>
+                  <option value="mod">Mod (Fabric/Forge/NeoForge)</option>
+                  <option value="plugin">Plugin (Paper/Spigot/Purpur)</option>
+                  <option value="datapack">Datapack</option>
+                </select>
+                <input
+                  placeholder="Cerca su Modrinth (es. Lithium, Essentials, LuckPerms)..."
+                  value={modQuery}
+                  onChange={(e) => setModQuery(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && searchMods()}
+                  style={{ minWidth: 260 }}
+                />
+                <button className="btn btn-primary btn-sm" onClick={searchMods} disabled={modLoading}>
+                  <Search size={14} /> {modLoading ? 'Ricerca...' : 'Cerca'}
+                </button>
+              </div>
+            </div>
+
+            <div className="grid-2">
+              {modHits.map((m) => (
+                <div
+                  key={m.project_id}
+                  style={{
+                    display: 'flex',
+                    gap: 12,
+                    padding: 12,
+                    borderRadius: 'var(--radius-sm)',
+                    background: 'var(--bg-input)',
+                    border: '1px solid var(--border-subtle)',
+                    alignItems: 'center',
+                  }}
+                >
+                  {m.icon_url ? (
+                    <img
+                      src={m.icon_url}
+                      alt={m.title}
+                      style={{ width: 44, height: 44, borderRadius: 8, objectFit: 'cover' }}
+                    />
+                  ) : (
+                    <div className="instance-icon-box">
+                      <Package size={18} />
+                    </div>
+                  )}
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontWeight: 600, fontSize: 13.5 }}>{m.title}</div>
+                    <div
+                      style={{
+                        fontSize: 12,
+                        color: 'var(--text-secondary)',
+                        whiteSpace: 'nowrap',
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                      }}
+                    >
+                      {m.description}
+                    </div>
+                    <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>
+                      by {m.author} • {m.downloads.toLocaleString()} download
+                    </div>
+                  </div>
+                  <button
+                    className="btn btn-primary btn-sm"
+                    onClick={async () => {
+                      try {
+                        const targetFolder = modType === 'plugin' ? 'plugins' : 'mods';
+                        const res = await api<{ installed: string; folder: string }>(
+                          `/api/instances/${instanceId}/mods/install`,
+                          {
+                            method: 'POST',
+                            body: JSON.stringify({
+                              project_id: m.project_id,
+                              folder: targetFolder,
+                            }),
+                          }
+                        );
+                        onNotify(`Installato ${res.installed} in ${res.folder}/`);
+                        if (targetFolder === modsFolder) {
+                          loadInstalledMods(modsFolder, false);
+                        }
+                      } catch (err: any) {
+                        onNotify(`Errore installazione: ${err.message}`);
+                      }
+                    }}
+                  >
+                    <Download size={13} /> Installa
+                  </button>
+                </div>
+              ))}
+            </div>
           </div>
         </div>
       )}
