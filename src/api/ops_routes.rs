@@ -194,11 +194,57 @@ pub async fn create_backup(
     )
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
 
+    let gcfg = crate::gdrive_backup::load_config(&state.db);
+    let max_keep = gcfg.max_backups_per_instance.max(1);
+    let pruned = backups::prune_local_backups(&state.db, &state.data_dir, &inst.id, max_keep);
+
+    // Auto-upload to Google Drive (<nome-server>/<nome_istanza>_backup/) and prune oldest on Drive
+    if gcfg.enabled && gcfg.connected {
+        let db_c = state.db.clone();
+        let http_c = state.http.clone();
+        let inst_name = inst.name.clone();
+        let local_path = backups::backup_dir(&state.data_dir, &inst.id).join(&entry.filename);
+        let fname = entry.filename.clone();
+        tokio::spawn(async move {
+            match crate::gdrive_backup::upload_backup_and_prune(
+                &db_c,
+                &http_c,
+                &inst_name,
+                &local_path,
+                &fname,
+            )
+            .await
+            {
+                Ok(remote_path) => {
+                    db_c.log_audit(
+                        "gdrive-sync",
+                        "BACKUP_GDRIVE_UPLOAD",
+                        &inst_name,
+                        &format!("Caricato su Google Drive: {} (max {} mantenuti)", remote_path, max_keep),
+                        "cloud",
+                    );
+                }
+                Err(e) => {
+                    db_c.log_audit(
+                        "gdrive-sync",
+                        "BACKUP_GDRIVE_ERROR",
+                        &inst_name,
+                        &e,
+                        "cloud",
+                    );
+                }
+            }
+        });
+    }
+
     state.db.log_audit(
         &auth.0.username,
         "BACKUP_CREATE",
         &inst.name,
-        &format!("{} ({} bytes)", entry.filename, entry.size_bytes),
+        &format!(
+            "{} ({} bytes) | Retention max {}: {} vecchi rimossi",
+            entry.filename, entry.size_bytes, max_keep, pruned
+        ),
         "local",
     );
     Ok(Json(entry))
@@ -732,5 +778,167 @@ pub async fn update_installed_mods(
         "updated_files": updated_files
     })))
 }
+
+// --- Google Drive Cloud Backup & OAuth2 Login ---
+
+pub async fn gdrive_status(
+    State(state): State<AppState>,
+    _auth: AuthUser,
+) -> Json<crate::gdrive_backup::GDrivePublicStatus> {
+    Json(crate::gdrive_backup::load_config(&state.db).into())
+}
+
+#[derive(Deserialize)]
+pub struct UpdateGDriveConfigReq {
+    pub enabled: bool,
+    pub client_id: String,
+    pub client_secret: Option<String>,
+    pub redirect_uri: String,
+    pub server_folder_name: String,
+    pub max_backups_per_instance: usize,
+}
+
+pub async fn gdrive_update_config(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Json(req): Json<UpdateGDriveConfigReq>,
+) -> Result<Json<crate::gdrive_backup::GDrivePublicStatus>, (StatusCode, String)> {
+    let mut cfg = crate::gdrive_backup::load_config(&state.db);
+    cfg.enabled = req.enabled;
+    cfg.client_id = req.client_id.trim().to_string();
+    if let Some(sec) = req.client_secret {
+        if !sec.trim().is_empty() {
+            cfg.client_secret = sec.trim().to_string();
+        }
+    }
+    cfg.redirect_uri = req.redirect_uri.trim().to_string();
+    cfg.server_folder_name = if req.server_folder_name.trim().is_empty() {
+        "GOLDSMP-Server".into()
+    } else {
+        req.server_folder_name.trim().to_string()
+    };
+    cfg.max_backups_per_instance = req.max_backups_per_instance.max(1);
+
+    crate::gdrive_backup::save_config(&state.db, &cfg)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+
+    state.db.log_audit(
+        &auth.0.username,
+        "GDRIVE_CONFIG_UPDATE",
+        &cfg.server_folder_name,
+        &format!("Retention max {} backup/istanza", cfg.max_backups_per_instance),
+        "local",
+    );
+    Ok(Json(cfg.into()))
+}
+
+pub async fn gdrive_auth_url(
+    State(state): State<AppState>,
+    _auth: AuthUser,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    let cfg = crate::gdrive_backup::load_config(&state.db);
+    let url = crate::gdrive_backup::build_oauth_url(&cfg)
+        .map_err(|e| (StatusCode::BAD_REQUEST, e))?;
+    Ok(Json(serde_json::json!({ "url": url })))
+}
+
+#[derive(Deserialize)]
+pub struct GDriveCallbackQuery {
+    pub code: Option<String>,
+    pub error: Option<String>,
+}
+
+pub async fn gdrive_callback(
+    State(state): State<AppState>,
+    Query(q): Query<GDriveCallbackQuery>,
+) -> axum::response::Html<String> {
+    if let Some(err) = q.error {
+        return axum::response::Html(format!(
+            "<html><body style='background:#0d0d12;color:#f87171;font-family:sans-serif;padding:40px'><h2>Accesso Google Drive annullato</h2><p>{}</p><a href='/' style='color:#f5b932'>Torna a GOLDSMP</a></body></html>",
+            err
+        ));
+    }
+    let Some(code) = q.code else {
+        return axum::response::Html(
+            "<html><body style='background:#0d0d12;color:#f87171;font-family:sans-serif;padding:40px'><h2>Codice OAuth mancante</h2><a href='/' style='color:#f5b932'>Torna a GOLDSMP</a></body></html>".into()
+        );
+    };
+
+    match crate::gdrive_backup::exchange_code(&state.db, &state.http, &code).await {
+        Ok(cfg) => {
+            let email = cfg.connected_email.unwrap_or_else(|| "Account Google".into());
+            state.db.log_audit(
+                "oauth2",
+                "GDRIVE_CONNECTED",
+                &email,
+                "Google Drive connesso per backup automatici",
+                "cloud",
+            );
+            axum::response::Html(format!(
+                "<html><body style='background:#0d0d12;color:#fff4d2;font-family:sans-serif;padding:40px;text-align:center'><h1 style='color:#f5b932'>Google Drive Connesso!</h1><p>Account collegato: <strong>{}</strong></p><p>I backup verranno salvati in <code>{}/&lt;nome_istanza&gt;_backup</code>.</p><script>setTimeout(()=>window.location.href='/', 2200);</script><a href='/' style='color:#38bdf8'>Torna subito a GOLDSMP</a></body></html>",
+                email, cfg.server_folder_name
+            ))
+        }
+        Err(e) => axum::response::Html(format!(
+            "<html><body style='background:#0d0d12;color:#f87171;font-family:sans-serif;padding:40px'><h2>Errore connessione Google Drive</h2><pre>{}</pre><a href='/' style='color:#f5b932'>Torna a GOLDSMP</a></body></html>",
+            e
+        )),
+    }
+}
+
+pub async fn gdrive_disconnect(
+    State(state): State<AppState>,
+    auth: AuthUser,
+) -> Result<Json<crate::gdrive_backup::GDrivePublicStatus>, (StatusCode, String)> {
+    let mut cfg = crate::gdrive_backup::load_config(&state.db);
+    cfg.connected = false;
+    cfg.connected_email = None;
+    cfg.access_token.clear();
+    cfg.refresh_token.clear();
+    cfg.token_expires_at = 0;
+    crate::gdrive_backup::save_config(&state.db, &cfg)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    state.db.log_audit(
+        &auth.0.username,
+        "GDRIVE_DISCONNECTED",
+        "gdrive",
+        "Account Google Drive scollegato",
+        "local",
+    );
+    Ok(Json(cfg.into()))
+}
+
+pub async fn upload_backup_to_gdrive(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Path((id, backup_id)): Path<(String, String)>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    if !auth.can_access_instance(&id) {
+        return Err((StatusCode::FORBIDDEN, "Accesso negato".into()));
+    }
+    let inst = state
+        .pm
+        .load_instance(&id)
+        .ok_or((StatusCode::NOT_FOUND, "Istanza non trovata".into()))?;
+    let list = backups::list_backups(&state.db, &id);
+    let b = list
+        .into_iter()
+        .find(|x| x.id == backup_id)
+        .ok_or((StatusCode::NOT_FOUND, "Backup non trovato".into()))?;
+
+    let local_path = backups::backup_dir(&state.data_dir, &id).join(&b.filename);
+    let remote = crate::gdrive_backup::upload_backup_and_prune(
+        &state.db,
+        &state.http,
+        &inst.name,
+        &local_path,
+        &b.filename,
+    )
+    .await
+    .map_err(|e| (StatusCode::BAD_GATEWAY, e))?;
+
+    Ok(Json(serde_json::json!({ "remote_path": remote })))
+}
+
 
 

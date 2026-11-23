@@ -152,6 +152,16 @@ pub fn build_router(state: AppState) -> Router {
             "/api/instances/:id/backups/:backup_id",
             delete(ops_routes::delete_backup),
         )
+        .route(
+            "/api/instances/:id/backups/:backup_id/upload-gdrive",
+            post(ops_routes::upload_backup_to_gdrive),
+        )
+        // Google Drive Cloud Backup & OAuth2 Login
+        .route("/api/gdrive/status", get(ops_routes::gdrive_status))
+        .route("/api/gdrive/config", put(ops_routes::gdrive_update_config))
+        .route("/api/gdrive/auth-url", get(ops_routes::gdrive_auth_url))
+        .route("/api/gdrive/callback", get(ops_routes::gdrive_callback))
+        .route("/api/gdrive/disconnect", post(ops_routes::gdrive_disconnect))
         // Modrinth Store & Installed Mods Folder Manager / Auto-Updater
         .route("/api/mods/search", get(ops_routes::search_mods))
         .route("/api/instances/:id/mods/install", post(ops_routes::install_mod))

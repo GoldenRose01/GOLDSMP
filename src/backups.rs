@@ -145,3 +145,22 @@ pub fn list_backups(db: &Database, instance_id: &str) -> Vec<BackupEntry> {
     .filter_map(|r| r.ok())
     .collect()
 }
+
+/// Keeps only the newest `max_keep` local backups for an instance and deletes the oldest ones.
+pub fn prune_local_backups(
+    db: &Database,
+    data_dir: &Path,
+    instance_id: &str,
+    max_keep: usize,
+) -> usize {
+    let keep = max_keep.max(1);
+    let all = list_backups(db, instance_id);
+    let mut removed = 0;
+    for old in all.into_iter().skip(keep) {
+        if delete_backup(db, data_dir, instance_id, &old.id).is_ok() {
+            removed += 1;
+        }
+    }
+    removed
+}
+

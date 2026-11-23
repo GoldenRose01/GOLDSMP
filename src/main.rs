@@ -5,6 +5,7 @@ mod backups;
 mod db;
 mod files;
 mod ftp_server;
+mod gdrive_backup;
 mod mailer;
 mod models;
 mod modrinth;

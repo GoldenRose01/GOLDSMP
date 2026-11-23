@@ -272,5 +272,17 @@ export interface InstalledModEntry {
   update_available: boolean;
 }
 
+export interface GDrivePublicStatus {
+  enabled: boolean;
+  client_id: string;
+  has_client_secret: boolean;
+  redirect_uri: string;
+  server_folder_name: string;
+  max_backups_per_instance: number;
+  connected: boolean;
+  connected_email?: string;
+}
+
+
 
 

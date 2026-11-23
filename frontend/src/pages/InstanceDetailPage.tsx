@@ -6,6 +6,7 @@ import {
   ConsoleLine,
   FileEntry,
   FtpInfo,
+  GDrivePublicStatus,
   InstalledModEntry,
   Instance,
   MetricPoint,
@@ -133,9 +134,18 @@ export const InstanceDetailPage: React.FC<InstanceDetailPageProps> = ({
   const [modsScanning, setModsScanning] = useState(false);
   const [modsUpdating, setModsUpdating] = useState(false);
 
-  // Backups state
+  // Backups & Google Drive state
   const [backups, setBackups] = useState<BackupEntry[]>([]);
   const [backupName, setBackupName] = useState('');
+  const [gdrive, setGdrive] = useState<GDrivePublicStatus | null>(null);
+  const [gdClientId, setGdClientId] = useState('');
+  const [gdClientSecret, setGdClientSecret] = useState('');
+  const [gdRedirectUri, setGdRedirectUri] = useState(
+    `${window.location.origin}/api/gdrive/callback`
+  );
+  const [gdServerFolder, setGdServerFolder] = useState('GOLDSMP-Server');
+  const [gdMaxBackups, setGdMaxBackups] = useState(5);
+  const [gdEnabled, setGdEnabled] = useState(true);
 
   // Scheduler state
   const [tasks, setTasks] = useState<ScheduledTask[]>([]);
@@ -276,8 +286,19 @@ export const InstanceDetailPage: React.FC<InstanceDetailPageProps> = ({
   };
 
   const loadBackups = async () => {
-    const list = await api<BackupEntry[]>(`/api/instances/${instanceId}/backups`);
+    const [list, gd] = await Promise.all([
+      api<BackupEntry[]>(`/api/instances/${instanceId}/backups`),
+      api<GDrivePublicStatus>('/api/gdrive/status').catch(() => null),
+    ]);
     setBackups(list);
+    if (gd) {
+      setGdrive(gd);
+      setGdClientId(gd.client_id || '');
+      setGdRedirectUri(gd.redirect_uri || `${window.location.origin}/api/gdrive/callback`);
+      setGdServerFolder(gd.server_folder_name || 'GOLDSMP-Server');
+      setGdMaxBackups(gd.max_backups_per_instance || 5);
+      setGdEnabled(gd.enabled);
+    }
   };
 
   const loadTasks = async () => {
@@ -1966,97 +1987,285 @@ export const InstanceDetailPage: React.FC<InstanceDetailPageProps> = ({
         </div>
       )}
 
-      {/* TAB 6: BACKUPS */}
+      {/* TAB 6: BACKUPS + GOOGLE DRIVE CLOUD SYNC & RETENTION (MAX X) */}
       {tab === 'backups' && (
-        <div className="card">
-          <div className="card-header" style={{ flexWrap: 'wrap' }}>
-            <span className="card-title">Backup Istanza (.tar.gz)</span>
-            <div style={{ display: 'flex', gap: 8 }}>
-              <input
-                placeholder="Nome backup (opzionale)..."
-                value={backupName}
-                onChange={(e) => setBackupName(e.target.value)}
-              />
-              <button
-                className="btn btn-primary btn-sm"
-                onClick={async () => {
-                  try {
-                    await api(`/api/instances/${instanceId}/backups`, {
-                      method: 'POST',
-                      body: JSON.stringify({ name: backupName, notes: 'Backup manuale' }),
-                    });
-                    setBackupName('');
-                    onNotify('Backup creato con successo');
-                    loadBackups();
-                  } catch (err: any) {
-                    onNotify(err.message);
-                  }
-                }}
-              >
-                <Archive size={14} /> Crea Backup Ora
-              </button>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+          {/* Google Drive Cloud Backup & Retention Card */}
+          <div className="card">
+            <div className="card-header" style={{ flexWrap: 'wrap' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                <Globe size={18} color="var(--arc-cyan)" />
+                <span className="card-title">Google Drive Cloud Backup & Retention (Max {gdMaxBackups} per Istanza)</span>
+                <span
+                  className={`status-badge ${
+                    gdrive?.connected ? 'status-running' : 'status-stopped'
+                  }`}
+                >
+                  <span className="status-dot" />
+                  {gdrive?.connected
+                    ? `Connesso (${gdrive.connected_email || 'Google Drive'})`
+                    : 'Non connesso'}
+                </span>
+              </div>
+
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                <button
+                  type="button"
+                  className="btn btn-secondary btn-sm"
+                  onClick={async () => {
+                    try {
+                      const updated = await api<GDrivePublicStatus>('/api/gdrive/config', {
+                        method: 'PUT',
+                        body: JSON.stringify({
+                          enabled: gdEnabled,
+                          client_id: gdClientId,
+                          client_secret: gdClientSecret || undefined,
+                          redirect_uri: gdRedirectUri,
+                          server_folder_name: gdServerFolder,
+                          max_backups_per_instance: Number(gdMaxBackups) || 5,
+                        }),
+                      });
+                      setGdrive(updated);
+                      setGdClientSecret('');
+                      onNotify('Configurazione Google Drive & Retention salvata!');
+                    } catch (err: any) {
+                      onNotify(err.message);
+                    }
+                  }}
+                >
+                  <Save size={14} /> Salva Configurazione
+                </button>
+
+                {gdrive?.connected ? (
+                  <button
+                    type="button"
+                    className="btn btn-danger btn-sm"
+                    onClick={async () => {
+                      const updated = await api<GDrivePublicStatus>('/api/gdrive/disconnect', {
+                        method: 'POST',
+                      });
+                      setGdrive(updated);
+                      onNotify('Google Drive disconnesso');
+                    }}
+                  >
+                    Disconnetti Drive
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    className="btn btn-primary btn-sm"
+                    onClick={async () => {
+                      try {
+                        // Save config first, then open Google OAuth2 login
+                        await api('/api/gdrive/config', {
+                          method: 'PUT',
+                          body: JSON.stringify({
+                            enabled: gdEnabled,
+                            client_id: gdClientId,
+                            client_secret: gdClientSecret || undefined,
+                            redirect_uri: gdRedirectUri,
+                            server_folder_name: gdServerFolder,
+                            max_backups_per_instance: Number(gdMaxBackups) || 5,
+                          }),
+                        });
+                        const res = await api<{ url: string }>('/api/gdrive/auth-url');
+                        window.open(res.url, '_blank');
+                      } catch (err: any) {
+                        onNotify(err.message);
+                      }
+                    }}
+                  >
+                    <Globe size={14} /> Connetti Google Drive (Login OAuth2)
+                  </button>
+                )}
+              </div>
+            </div>
+
+            <p style={{ fontSize: 12.5, color: 'var(--text-secondary)', marginBottom: 14 }}>
+              I backup vengono salvati compressi in{' '}
+              <code style={{ color: 'var(--accent-hover)' }}>
+                {gdServerFolder || 'GOLDSMP-Server'}/{inst.name.replace(/[^a-zA-Z0-9_-]/g, '_')}_backup/
+              </code>{' '}
+              su Google Drive e in locale. Al superamento di <strong>{gdMaxBackups}</strong> backup per istanza,
+              il più vecchio viene <strong>eliminato automaticamente</strong> sia su disco che su Google Drive.
+            </p>
+
+            <div className="grid-3" style={{ marginBottom: 12 }}>
+              <div className="field">
+                <label>Cartella Root Server su Drive (&lt;nome-server&gt;)</label>
+                <input
+                  value={gdServerFolder}
+                  onChange={(e) => setGdServerFolder(e.target.value)}
+                  placeholder="GOLDSMP-Server"
+                />
+              </div>
+              <div className="field">
+                <label>Max Backup da Mantenere per Istanza (X)</label>
+                <input
+                  type="number"
+                  min={1}
+                  max={100}
+                  value={gdMaxBackups}
+                  onChange={(e) => setGdMaxBackups(Number(e.target.value))}
+                />
+              </div>
+              <div className="field" style={{ justifyContent: 'center' }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 18 }}>
+                  <input
+                    type="checkbox"
+                    checked={gdEnabled}
+                    onChange={(e) => setGdEnabled(e.target.checked)}
+                  />
+                  Carica automaticamente su Google Drive ad ogni backup
+                </label>
+              </div>
+            </div>
+
+            <div className="grid-3">
+              <div className="field">
+                <label>Google OAuth2 Client ID</label>
+                <input
+                  value={gdClientId}
+                  onChange={(e) => setGdClientId(e.target.value)}
+                  placeholder="xxxx.apps.googleusercontent.com"
+                />
+              </div>
+              <div className="field">
+                <label>
+                  Google OAuth2 Client Secret {gdrive?.has_client_secret ? '(già salvato)' : ''}
+                </label>
+                <input
+                  type="password"
+                  value={gdClientSecret}
+                  onChange={(e) => setGdClientSecret(e.target.value)}
+                  placeholder={gdrive?.has_client_secret ? '•••••••• (lascia vuoto per mantenere)' : 'GOCSPX-...'}
+                />
+              </div>
+              <div className="field">
+                <label>OAuth2 Redirect URI</label>
+                <input
+                  value={gdRedirectUri}
+                  onChange={(e) => setGdRedirectUri(e.target.value)}
+                />
+              </div>
             </div>
           </div>
 
-          <div className="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>Nome</th>
-                  <th>Archivio</th>
-                  <th>Dimensione</th>
-                  <th>Creato il</th>
-                  <th style={{ textAlign: 'right' }}>Azioni</th>
-                </tr>
-              </thead>
-              <tbody>
-                {backups.map((b) => (
-                  <tr key={b.id}>
-                    <td style={{ fontWeight: 500 }}>{b.name}</td>
-                    <td style={{ fontFamily: 'var(--font-mono)', fontSize: 12 }}>{b.filename}</td>
-                    <td style={{ fontFamily: 'var(--font-mono)', fontSize: 12 }}>
-                      {formatBytes(b.size_bytes)}
-                    </td>
-                    <td style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
-                      {new Date(b.created_at).toLocaleString()}
-                    </td>
-                    <td style={{ textAlign: 'right', display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
-                      <button
-                        className="btn btn-warning btn-sm"
-                        onClick={async () => {
-                          if (!confirm(`Ripristinare ${b.name}? I file correnti verranno sovrascritti.`))
-                            return;
-                          await api(`/api/instances/${instanceId}/backups/${b.id}/restore`, {
-                            method: 'POST',
-                          });
-                          onNotify('Backup ripristinato');
-                        }}
-                      >
-                        Ripristina
-                      </button>
-                      <button
-                        className="btn btn-danger btn-sm"
-                        onClick={async () => {
-                          await api(`/api/instances/${instanceId}/backups/${b.id}`, {
-                            method: 'DELETE',
-                          });
-                          loadBackups();
-                        }}
-                      >
-                        <Trash2 size={13} />
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-                {backups.length === 0 && (
+          {/* Local + Cloud Backup List */}
+          <div className="card">
+            <div className="card-header" style={{ flexWrap: 'wrap' }}>
+              <span className="card-title">
+                Archivi Backup Istanza (.tar.gz) — Retention attiva: max {gdMaxBackups}
+              </span>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <input
+                  placeholder="Nome backup (opzionale)..."
+                  value={backupName}
+                  onChange={(e) => setBackupName(e.target.value)}
+                />
+                <button
+                  className="btn btn-primary btn-sm"
+                  onClick={async () => {
+                    try {
+                      await api(`/api/instances/${instanceId}/backups`, {
+                        method: 'POST',
+                        body: JSON.stringify({ name: backupName, notes: 'Backup manuale' }),
+                      });
+                      setBackupName('');
+                      onNotify(
+                        gdrive?.connected && gdEnabled
+                          ? `Backup creato, sincronizzato su Google Drive e retention (max ${gdMaxBackups}) applicata!`
+                          : `Backup creato e retention locale (max ${gdMaxBackups}) applicata!`
+                      );
+                      loadBackups();
+                    } catch (err: any) {
+                      onNotify(err.message);
+                    }
+                  }}
+                >
+                  <Archive size={14} /> Crea Backup Ora
+                </button>
+              </div>
+            </div>
+
+            <div className="table-wrap">
+              <table>
+                <thead>
                   <tr>
-                    <td colSpan={5} style={{ textAlign: 'center', color: 'var(--text-muted)' }}>
-                      Nessun backup presente per questa istanza.
-                    </td>
+                    <th>Nome</th>
+                    <th>Archivio</th>
+                    <th>Dimensione</th>
+                    <th>Creato il</th>
+                    <th style={{ textAlign: 'right' }}>Azioni</th>
                   </tr>
-                )}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {backups.map((b) => (
+                    <tr key={b.id}>
+                      <td style={{ fontWeight: 500 }}>{b.name}</td>
+                      <td style={{ fontFamily: 'var(--font-mono)', fontSize: 12 }}>{b.filename}</td>
+                      <td style={{ fontFamily: 'var(--font-mono)', fontSize: 12 }}>
+                        {formatBytes(b.size_bytes)}
+                      </td>
+                      <td style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
+                        {new Date(b.created_at).toLocaleString()}
+                      </td>
+                      <td style={{ textAlign: 'right', display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
+                        {gdrive?.connected && (
+                          <button
+                            className="btn btn-secondary btn-sm"
+                            onClick={async () => {
+                              try {
+                                const res = await api<{ remote_path: string }>(
+                                  `/api/instances/${instanceId}/backups/${b.id}/upload-gdrive`,
+                                  { method: 'POST' }
+                                );
+                                onNotify(`Caricato su Drive: ${res.remote_path}`);
+                              } catch (err: any) {
+                                onNotify(err.message);
+                              }
+                            }}
+                          >
+                            <Globe size={12} /> Carica su Drive
+                          </button>
+                        )}
+                        <button
+                          className="btn btn-warning btn-sm"
+                          onClick={async () => {
+                            if (!confirm(`Ripristinare ${b.name}? I file correnti verranno sovrascritti.`))
+                              return;
+                            await api(`/api/instances/${instanceId}/backups/${b.id}/restore`, {
+                              method: 'POST',
+                            });
+                            onNotify('Backup ripristinato');
+                          }}
+                        >
+                          Ripristina
+                        </button>
+                        <button
+                          className="btn btn-danger btn-sm"
+                          onClick={async () => {
+                            await api(`/api/instances/${instanceId}/backups/${b.id}`, {
+                              method: 'DELETE',
+                            });
+                            loadBackups();
+                          }}
+                        >
+                          <Trash2 size={13} />
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                  {backups.length === 0 && (
+                    <tr>
+                      <td colSpan={5} style={{ textAlign: 'center', color: 'var(--text-muted)' }}>
+                        Nessun backup presente per questa istanza.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
           </div>
         </div>
       )}
