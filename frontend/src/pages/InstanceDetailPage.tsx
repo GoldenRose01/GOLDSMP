@@ -44,15 +44,7 @@ import {
   Zap,
 } from 'lucide-react';
 
-interface InstanceDetailPageProps {
-  instanceId: string;
-  templates: AppTemplate[];
-  onBack: () => void;
-  onRefreshInstances: () => void;
-  onNotify: (msg: string) => void;
-}
-
-type TabId =
+export type InstanceTabId =
   | 'status'
   | 'console'
   | 'horizon'
@@ -65,14 +57,31 @@ type TabId =
   | 'backups'
   | 'scheduler';
 
+interface InstanceDetailPageProps {
+  instanceId: string;
+  templates: AppTemplate[];
+  activeTab?: InstanceTabId;
+  onTabChange?: (tab: InstanceTabId) => void;
+  onBack: () => void;
+  onRefreshInstances: () => void;
+  onNotify: (msg: string) => void;
+}
+
 export const InstanceDetailPage: React.FC<InstanceDetailPageProps> = ({
   instanceId,
   templates,
+  activeTab,
+  onTabChange,
   onBack,
   onRefreshInstances,
   onNotify,
 }) => {
-  const [tab, setTab] = useState<TabId>('status');
+  const [internalTab, setInternalTab] = useState<InstanceTabId>(activeTab || 'status');
+  const tab = activeTab ?? internalTab;
+  const setTab = (next: InstanceTabId) => {
+    setInternalTab(next);
+    if (onTabChange) onTabChange(next);
+  };
   const [inst, setInst] = useState<Instance | null>(null);
   const [metrics, setMetrics] = useState<MetricPoint[]>([]);
   const [ftpInfo, setFtpInfo] = useState<FtpInfo | null>(null);
@@ -460,7 +469,7 @@ export const InstanceDetailPage: React.FC<InstanceDetailPageProps> = ({
             <button
               key={t.id}
               className={`subtab ${tab === t.id ? 'active' : ''}`}
-              onClick={() => setTab(t.id as TabId)}
+              onClick={() => setTab(t.id as InstanceTabId)}
             >
               <Icon size={15} /> {t.label}
             </button>
@@ -468,9 +477,64 @@ export const InstanceDetailPage: React.FC<InstanceDetailPageProps> = ({
         })}
       </div>
 
-      {/* TAB 1: STATUS */}
+      {/* TAB 1: STATUS (AMP-Style Connection Banner + Arc Gauges + Live Charts) */}
       {tab === 'status' && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+          {/* AMP-style Connection Info Banner */}
+          <div
+            className="card"
+            style={{
+              padding: '12px 18px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: 14,
+              flexWrap: 'wrap',
+              background:
+                'linear-gradient(90deg, rgba(245, 185, 50, 0.1) 0%, rgba(15, 15, 22, 0.95) 60%)',
+            }}
+          >
+            <div style={{ display: 'flex', gap: 22, flexWrap: 'wrap', fontFamily: 'var(--font-mono)', fontSize: 12.5 }}>
+              <div>
+                <span style={{ color: 'var(--text-muted)', marginRight: 6 }}>ENDPOINT:</span>
+                <strong style={{ color: '#fff4d2' }}>
+                  {window.location.hostname || '127.0.0.1'}:{inst.port}
+                </strong>
+              </div>
+              <div>
+                <span style={{ color: 'var(--text-muted)', marginRight: 6 }}>FTP:</span>
+                <strong style={{ color: 'var(--arc-cyan)' }}>
+                  ftp://{window.location.hostname || '127.0.0.1'}:{ftpInfo?.port || 2121}
+                </strong>
+              </div>
+              <div>
+                <span style={{ color: 'var(--text-muted)', marginRight: 6 }}>PID:</span>
+                <strong>{inst.pid ?? '--'}</strong>
+              </div>
+            </div>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button
+                type="button"
+                className="btn btn-secondary btn-sm"
+                onClick={() => {
+                  navigator.clipboard?.writeText(
+                    `${window.location.hostname || '127.0.0.1'}:${inst.port}`
+                  );
+                  onNotify('Indirizzo server copiato negli appunti!');
+                }}
+              >
+                Copia Indirizzo
+              </button>
+              <button
+                type="button"
+                className="btn btn-secondary btn-sm"
+                onClick={() => setTab('console')}
+              >
+                <Terminal size={13} /> Apri Console
+              </button>
+            </div>
+          </div>
+
           <div className="grid-4">
             <Gauge
               label="Utilizzo CPU"

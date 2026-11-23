@@ -13,15 +13,17 @@ import {
   Settings2,
   Sparkles,
   Square,
+  Terminal,
   Users,
   Zap,
 } from 'lucide-react';
+import { InstanceTabId } from './InstanceDetailPage';
 
 interface InstancesPageProps {
   instances: Instance[];
   sysInfo: HostSystemInfo | null;
   onRefresh: () => void;
-  onSelectInstance: (id: string) => void;
+  onSelectInstance: (id: string, tab?: InstanceTabId) => void;
   onOpenCreate: () => void;
   onNotify: (msg: string) => void;
 }
@@ -266,6 +268,15 @@ export const InstancesPage: React.FC<InstancesPageProps> = ({
                 cursor: 'pointer',
                 overflow: 'hidden',
                 position: 'relative',
+                borderLeft: `4px solid ${
+                  inst.status === 'running'
+                    ? 'var(--arc-cyan)'
+                    : inst.status === 'starting' || inst.status === 'stopping'
+                    ? 'var(--accent)'
+                    : inst.status === 'crashed'
+                    ? 'var(--danger)'
+                    : 'rgba(148, 163, 184, 0.28)'
+                }`,
               }}
             >
               {/* Transparent Game Artwork Watermark inside Instance Card */}
@@ -421,12 +432,22 @@ export const InstancesPage: React.FC<InstancesPageProps> = ({
                   )}
                   <button
                     className="btn btn-secondary btn-sm"
+                    title="Apri Console Live"
                     onClick={(e) => {
                       e.stopPropagation();
-                      onSelectInstance(inst.id);
+                      onSelectInstance(inst.id, 'console');
                     }}
                   >
-                    <Settings2 size={13} /> Menu Completo
+                    <Terminal size={13} />
+                  </button>
+                  <button
+                    className="btn btn-primary btn-sm"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onSelectInstance(inst.id, 'status');
+                    }}
+                  >
+                    <Settings2 size={13} /> Gestisci
                   </button>
                 </div>
               </div>
