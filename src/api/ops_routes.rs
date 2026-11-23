@@ -565,6 +565,24 @@ pub async fn updater_config(
     Ok(Json(st))
 }
 
+pub async fn updater_restart(
+    State(state): State<AppState>,
+    auth: AuthUser,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    state.db.log_audit(
+        &auth.0.username,
+        "UPDATER_RESTART",
+        "panel",
+        "Riavvio automatico binario GOLDSMP con exec() in-place",
+        "local",
+    );
+    state
+        .updater
+        .trigger_self_restart()
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    Ok(Json(serde_json::json!({ "status": "restarting" })))
+}
+
 // --- Installed Mods Folder Manager & Modrinth Auto-Updater ---
 
 #[derive(Deserialize)]

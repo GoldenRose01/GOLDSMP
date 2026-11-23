@@ -11,6 +11,7 @@ import {
   WebhookConfig,
 } from '../types';
 import { DownloadCloud, Plus, RefreshCw, Save, Send, Trash2 } from 'lucide-react';
+import { formatRamValue, useRamUnit } from '../utils/ramUnit';
 
 // --- WEBHOOKS PAGE ---
 export const WebhooksPage: React.FC<{
@@ -456,6 +457,9 @@ export const SettingsPage: React.FC<{
     onNotify('Impostazioni e configurazione aggiornamenti salvate');
   };
 
+  const [ramUnit] = useRamUnit();
+  const [restartingBin, setRestartingBin] = useState(false);
+
   const checkUpdates = async (forceApply = false) => {
     setChecking(true);
     try {
@@ -465,7 +469,11 @@ export const SettingsPage: React.FC<{
       );
       setUpdStatus(st);
       if (st.state === 'ready_refresh') {
-        onNotify('Aggiornamento scaricato! Premi Aggiorna Pagina (F5), nessun server interrotto.');
+        onNotify(
+          `Aggiornamento v${st.latest_version || st.active_ui_version} applicato! Premi Aggiorna Pagina (F5) o Riavvia Binario.`
+        );
+      } else if (st.update_available) {
+        onNotify(`Trovata nuova versione v${st.latest_version} su GitHub! Clicca Scarica & Attiva.`);
       } else if (st.state === 'up_to_date') {
         onNotify(`GOLDSMP è già aggiornato (v${st.active_ui_version})`);
       } else if (st.error) {
@@ -473,6 +481,18 @@ export const SettingsPage: React.FC<{
       }
     } finally {
       setChecking(false);
+    }
+  };
+
+  const restartPanelBinary = async () => {
+    setRestartingBin(true);
+    try {
+      await api('/api/updater/restart', { method: 'POST' });
+      onNotify('Riavvio binario GOLDSMP in corso... ricarico pagina tra 2 secondi');
+      setTimeout(() => window.location.reload(), 2000);
+    } catch (err: any) {
+      onNotify(err.message || 'Errore riavvio binario');
+      setRestartingBin(false);
     }
   };
 
@@ -521,16 +541,18 @@ export const SettingsPage: React.FC<{
               >
                 <RefreshCw size={13} /> {checking ? 'Controllo...' : 'Controlla Ora'}
               </button>
-              {updStatus.update_available && (
-                <button
-                  type="button"
-                  className="btn btn-primary btn-sm"
-                  disabled={checking}
-                  onClick={() => checkUpdates(true)}
-                >
-                  <DownloadCloud size={13} /> Scarica & Attiva
-                </button>
-              )}
+              <button
+                type="button"
+                className="btn btn-primary btn-sm"
+                disabled={checking}
+                onClick={() => checkUpdates(true)}
+                title="Scarica e installa forzatamente l'ultima versione da GitHub (Release o Git)"
+              >
+                <DownloadCloud size={13} />{' '}
+                {updStatus.update_available
+                  ? `Scarica & Attiva v${updStatus.latest_version}`
+                  : 'Forza Aggiornamento da GitHub'}
+              </button>
               {(updStatus.ui_hot_updated || updStatus.state === 'ready_refresh') && (
                 <button
                   type="button"
@@ -538,6 +560,18 @@ export const SettingsPage: React.FC<{
                   onClick={() => window.location.reload()}
                 >
                   <RefreshCw size={13} /> Aggiorna Pagina (F5)
+                </button>
+              )}
+              {updStatus.binary_staged && (
+                <button
+                  type="button"
+                  className="btn btn-secondary btn-sm"
+                  disabled={restartingBin}
+                  onClick={restartPanelBinary}
+                  title="Sostituisce il processo del pannello con il nuovo binario compilato"
+                >
+                  <RefreshCw size={13} />{' '}
+                  {restartingBin ? 'Riavvio...' : 'Riavvia Binario Pannello'}
                 </button>
               )}
             </div>
@@ -722,7 +756,7 @@ export const SettingsPage: React.FC<{
             <div>
               <div style={{ color: 'var(--text-muted)' }}>RAM Processo GOLDSMP</div>
               <div style={{ color: 'var(--success)', fontWeight: 700 }}>
-                {sysInfo.panel_memory_mb.toFixed(2)} MB (v{sysInfo.panel_version})
+                {formatRamValue(sysInfo.panel_memory_mb, ramUnit, ramUnit === 'GB' ? 3 : 2)} (v{sysInfo.panel_version})
               </div>
             </div>
           </div>

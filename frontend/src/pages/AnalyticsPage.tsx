@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { api, formatDuration, getToken } from '../api/client';
 import { AnalyticsOverview, GeoFilterRule, Instance, MetricPoint } from '../types';
 import { SparkChart } from '../components/SparkChart';
+import { useRamUnit } from '../utils/ramUnit';
 import { Download, Globe, ShieldAlert, Trash2, Users } from 'lucide-react';
 
 interface AnalyticsPageProps {
@@ -15,6 +16,7 @@ export const AnalyticsPage: React.FC<AnalyticsPageProps> = ({ instances, onNotif
   const [metrics, setMetrics] = useState<MetricPoint[]>([]);
   const [overview, setOverview] = useState<AnalyticsOverview | null>(null);
   const [geoRules, setGeoRules] = useState<GeoFilterRule[]>([]);
+  const [ramUnit] = useRamUnit();
 
   const [ruleCountryCode, setRuleCountryCode] = useState('RU');
   const [ruleCountryName, setRuleCountryName] = useState('Russia');
@@ -124,10 +126,13 @@ export const AnalyticsPage: React.FC<AnalyticsPageProps> = ({ instances, onNotif
           maxOverride={100}
         />
         <SparkChart
-          title="Memoria RAM nel Tempo"
-          unit="MB"
+          title={`Memoria RAM nel Tempo (${ramUnit})`}
+          unit={ramUnit}
           color="#10b981"
-          data={metrics.map((m) => ({ timestamp: m.timestamp, value: m.memory_mb }))}
+          data={metrics.map((m) => ({
+            timestamp: m.timestamp,
+            value: ramUnit === 'GB' ? Number((m.memory_mb / 1024).toFixed(2)) : m.memory_mb,
+          }))}
         />
         <SparkChart
           title="Traffico di Rete (RX KB/s)"

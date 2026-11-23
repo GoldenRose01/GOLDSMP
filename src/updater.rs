@@ -56,6 +56,11 @@ struct GithubAsset {
     browser_download_url: String,
 }
 
+#[derive(Debug, Deserialize)]
+struct GithubTag {
+    name: String,
+}
+
 pub struct AutoUpdater {
     db: Database,
     data_dir: PathBuf,
@@ -67,7 +72,15 @@ impl AutoUpdater {
     pub fn new(db: Database, data_dir: PathBuf, http: reqwest::Client) -> Self {
         let cfg = Self::load_config(&db);
         let cur = env!("CARGO_PKG_VERSION").to_string();
-        let active_ui = Self::read_ui_override_version(&data_dir).unwrap_or_else(|| cur.clone());
+        let active_ui = Self::read_ui_override_version(&data_dir)
+            .map(|ui_v| {
+                if compare_semver(&ui_v, &cur) >= 0 {
+                    ui_v
+                } else {
+                    cur.clone()
+                }
+            })
+            .unwrap_or_else(|| cur.clone());
         let status = UpdateStatus {
             current_version: cur,
             latest_version: None,
@@ -130,8 +143,8 @@ impl AutoUpdater {
     pub fn spawn_background_loop(self: &Arc<Self>) {
         let updater = Arc::clone(self);
         tokio::spawn(async move {
-            // Initial check 12 seconds after boot so startup stays instant
-            tokio::time::sleep(std::time::Duration::from_secs(12)).await;
+            // Initial check 8 seconds after boot so startup stays instant
+            tokio::time::sleep(std::time::Duration::from_secs(8)).await;
             loop {
                 let cfg = updater.get_status().config;
                 if cfg.auto_check {
@@ -143,6 +156,101 @@ impl AutoUpdater {
         });
     }
 
+    async fn fetch_latest_release(&self, repo: &str) -> Option<GithubRelease> {
+        // 1. Try /releases/latest
+        let latest_url = format!("https://api.github.com/repos/{}/releases/latest", repo);
+        if let Ok(resp) = self
+            .http
+            .get(&latest_url)
+            .header("User-Agent", "GOLDSMP-Updater/1.0")
+            .header("Accept", "application/vnd.github+json")
+            .send()
+            .await
+        {
+            if resp.status().is_success() {
+                if let Ok(rel) = resp.json::<GithubRelease>().await {
+                    return Some(rel);
+                }
+            }
+        }
+
+        // 2. Fallback to /releases (includes prereleases or newest published release)
+        let list_url = format!("https://api.github.com/repos/{}/releases?per_page=10", repo);
+        if let Ok(resp) = self
+            .http
+            .get(&list_url)
+            .header("User-Agent", "GOLDSMP-Updater/1.0")
+            .header("Accept", "application/vnd.github+json")
+            .send()
+            .await
+        {
+            if resp.status().is_success() {
+                if let Ok(mut rels) = resp.json::<Vec<GithubRelease>>().await {
+                    rels.sort_by(|a, b| compare_semver(&b.tag_name, &a.tag_name).cmp(&0));
+                    if let Some(best) = rels.into_iter().next() {
+                        return Some(best);
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    async fn fetch_highest_tag_version(&self, repo: &str) -> Option<String> {
+        let tags_url = format!("https://api.github.com/repos/{}/tags?per_page=20", repo);
+        let resp = self
+            .http
+            .get(&tags_url)
+            .header("User-Agent", "GOLDSMP-Updater/1.0")
+            .header("Accept", "application/vnd.github+json")
+            .send()
+            .await
+            .ok()?;
+        if !resp.status().is_success() {
+            return None;
+        }
+        let tags: Vec<GithubTag> = resp.json().await.ok()?;
+        let mut best: Option<String> = None;
+        for t in tags {
+            let v = t.name.trim_start_matches('v').to_string();
+            if best.as_ref().map_or(true, |b| compare_semver(&v, b) > 0) {
+                best = Some(v);
+            }
+        }
+        best
+    }
+
+    async fn fetch_main_cargo_version(&self, repo: &str) -> Option<String> {
+        let raw_url = format!(
+            "https://raw.githubusercontent.com/{}/main/Cargo.toml?t={}",
+            repo,
+            Utc::now().timestamp()
+        );
+        let text = self
+            .http
+            .get(&raw_url)
+            .header("User-Agent", "GOLDSMP-Updater/1.0")
+            .header("Cache-Control", "no-cache")
+            .send()
+            .await
+            .ok()?
+            .text()
+            .await
+            .ok()?;
+        for line in text.lines() {
+            let trimmed = line.trim();
+            if trimmed.starts_with("version") && trimmed.contains('=') {
+                if let Some(val) = trimmed.split('=').nth(1) {
+                    let clean = val.trim().trim_matches('"').trim_matches('\'').trim_start_matches('v');
+                    if !clean.is_empty() {
+                        return Some(clean.to_string());
+                    }
+                }
+            }
+        }
+        None
+    }
+
     pub async fn check_and_maybe_download(&self, auto_download: bool) -> UpdateStatus {
         let repo = {
             let mut st = self.status.lock().unwrap();
@@ -151,70 +259,70 @@ impl AutoUpdater {
             st.config.repo.clone()
         };
 
-        let url = format!("https://api.github.com/repos/{}/releases/latest", repo);
-        let resp = match self
-            .http
-            .get(&url)
-            .header("User-Agent", "GOLDSMP-Updater/1.0")
-            .header("Accept", "application/vnd.github+json")
-            .send()
-            .await
-        {
-            Ok(r) => r,
-            Err(e) => {
+        // Query all 3 sources on GitHub so we NEVER get stuck on 1.0.0 even while GitHub Actions is still building the Release!
+        let (release_opt, tag_ver_opt, cargo_ver_opt) = tokio::join!(
+            self.fetch_latest_release(&repo),
+            self.fetch_highest_tag_version(&repo),
+            self.fetch_main_cargo_version(&repo)
+        );
+
+        let mut best_ver: Option<String> = None;
+        let mut consider = |v: &str| {
+            let clean = v.trim().trim_start_matches('v').to_string();
+            if !clean.is_empty()
+                && best_ver
+                    .as_ref()
+                    .map_or(true, |cur_best| compare_semver(&clean, cur_best) > 0)
+            {
+                best_ver = Some(clean);
+            }
+        };
+
+        if let Some(ref rel) = release_opt {
+            consider(&rel.tag_name);
+        }
+        if let Some(ref tv) = tag_ver_opt {
+            consider(tv);
+        }
+        if let Some(ref cv) = cargo_ver_opt {
+            consider(cv);
+        }
+
+        let latest_ver = match best_ver {
+            Some(v) => v,
+            None => {
                 let mut st = self.status.lock().unwrap();
                 st.state = "error".into();
                 st.last_checked = Some(Utc::now().to_rfc3339());
-                st.error = Some(format!("Errore rete GitHub: {}", e));
+                st.error = Some(format!(
+                    "Impossibile leggere la versione da GitHub ({}). Verifica la connessione o il nome repo.",
+                    repo
+                ));
                 return st.clone();
             }
         };
 
-        if resp.status().as_u16() == 404 {
-            // Repository has no published GitHub Release yet — completely normal on fresh repo
-            let mut st = self.status.lock().unwrap();
-            st.state = "up_to_date".into();
-            st.update_available = false;
-            st.latest_version = Some(st.current_version.clone());
-            st.last_checked = Some(Utc::now().to_rfc3339());
-            st.error = None;
-            return st.clone();
-        }
-
-        if !resp.status().is_success() {
-            let code = resp.status();
-            let mut st = self.status.lock().unwrap();
-            st.state = "error".into();
-            st.last_checked = Some(Utc::now().to_rfc3339());
-            st.error = Some(format!("GitHub API ha risposto con status {}", code));
-            return st.clone();
-        }
-
-        let release: GithubRelease = match resp.json().await {
-            Ok(r) => r,
-            Err(e) => {
-                let mut st = self.status.lock().unwrap();
-                st.state = "error".into();
-                st.last_checked = Some(Utc::now().to_rfc3339());
-                st.error = Some(format!("Errore parsing release: {}", e));
-                return st.clone();
-            }
-        };
-
-        let latest_ver = release.tag_name.trim_start_matches('v').to_string();
-        let current_ver = {
+        let (current_bin_ver, current_ui_ver) = {
             let st = self.status.lock().unwrap();
-            st.active_ui_version.clone()
+            (st.current_version.clone(), st.active_ui_version.clone())
         };
 
-        let is_newer = compare_semver(&latest_ver, &current_ver) > 0;
+        // An update is available if either the active UI or the running binary is older than latest_ver
+        let is_newer = compare_semver(&latest_ver, &current_ui_ver) > 0
+            || compare_semver(&latest_ver, &current_bin_ver) > 0;
 
         {
             let mut st = self.status.lock().unwrap();
             st.latest_version = Some(latest_ver.clone());
             st.update_available = is_newer;
-            st.release_notes = release.body.clone().unwrap_or_default();
-            st.release_url = release.html_url.clone();
+            st.release_notes = release_opt
+                .as_ref()
+                .and_then(|r| r.body.clone())
+                .unwrap_or_else(|| format!("Aggiornamento GOLDSMP v{} rilevato su GitHub ({})", latest_ver, repo));
+            st.release_url = release_opt
+                .as_ref()
+                .map(|r| r.html_url.clone())
+                .unwrap_or_else(|| format!("https://github.com/{}/releases/tag/v{}", repo, latest_ver));
             st.last_checked = Some(Utc::now().to_rfc3339());
             if !is_newer {
                 st.state = "up_to_date".into();
@@ -223,15 +331,20 @@ impl AutoUpdater {
         }
 
         if auto_download {
-            return self.download_and_stage_release(&release, &latest_ver).await;
+            return self
+                .download_and_stage_release(release_opt.as_ref(), &repo, &latest_ver)
+                .await;
         }
 
-        self.get_status()
+        let mut st = self.status.lock().unwrap();
+        st.state = "idle".into();
+        st.clone()
     }
 
     async fn download_and_stage_release(
         &self,
-        release: &GithubRelease,
+        release: Option<&GithubRelease>,
+        repo: &str,
         latest_ver: &str,
     ) -> UpdateStatus {
         {
@@ -243,50 +356,83 @@ impl AutoUpdater {
         let mut ui_updated = false;
         let mut bin_staged = false;
 
-        // 1. Zero-Downtime UI Hot-Swap (frontend-dist.tar.gz) -> user only needs to press F5!
-        if let Some(ui_asset) = release
-            .assets
-            .iter()
-            .find(|a| a.name == "frontend-dist.tar.gz" || a.name.contains("frontend"))
-        {
-            match self.download_and_extract_ui(&ui_asset.browser_download_url, latest_ver).await {
-                Ok(_) => {
-                    ui_updated = true;
+        // Only use GitHub Release assets if the release tag matches latest_ver
+        let matching_release = release.filter(|r| {
+            compare_semver(r.tag_name.trim_start_matches('v'), latest_ver) == 0
+        });
+
+        if let Some(rel) = matching_release {
+            // 1. Zero-Downtime UI Hot-Swap (frontend-dist.tar.gz) -> user only needs to press F5!
+            if let Some(ui_asset) = rel
+                .assets
+                .iter()
+                .find(|a| a.name == "frontend-dist.tar.gz" || a.name.contains("frontend"))
+            {
+                match self
+                    .download_and_extract_ui(&ui_asset.browser_download_url, latest_ver)
+                    .await
+                {
+                    Ok(_) => {
+                        ui_updated = true;
+                        tracing::info!(
+                            "GOLDSMP UI v{} scaricata da GitHub Release e attivata a caldo!",
+                            latest_ver
+                        );
+                    }
+                    Err(e) => {
+                        tracing::warn!("Errore download UI asset da Release: {}", e);
+                    }
+                }
+            }
+
+            // 2. Atomic Binary Self-Update (stages new binary without killing running game servers)
+            let arch_asset_name = if cfg!(target_arch = "aarch64") {
+                "goldsmp-linux-aarch64"
+            } else {
+                "goldsmp-linux-x86_64"
+            };
+            if let Some(bin_asset) = rel
+                .assets
+                .iter()
+                .find(|a| a.name == arch_asset_name || a.name == "goldsmp")
+            {
+                if self
+                    .download_and_stage_binary(&bin_asset.browser_download_url)
+                    .await
+                    .is_ok()
+                {
+                    bin_staged = true;
                     tracing::info!(
-                        "GOLDSMP UI v{} scaricata e attivata a caldo! Nessun server interrotto.",
+                        "GOLDSMP binario v{} scaricato da GitHub Release e sostituito su disco.",
                         latest_ver
                     );
-                }
-                Err(e) => {
-                    let mut st = self.status.lock().unwrap();
-                    st.state = "error".into();
-                    st.error = Some(format!("Errore aggiornamento UI: {}", e));
-                    return st.clone();
                 }
             }
         }
 
-        // 2. Atomic Binary Self-Update (stages new binary without killing running game servers)
-        let arch_asset_name = if cfg!(target_arch = "aarch64") {
-            "goldsmp-linux-aarch64"
-        } else {
-            "goldsmp-linux-x86_64"
-        };
-        if let Some(bin_asset) = release
-            .assets
-            .iter()
-            .find(|a| a.name == arch_asset_name || a.name == "goldsmp")
-        {
-            if self
-                .download_and_stage_binary(&bin_asset.browser_download_url)
-                .await
-                .is_ok()
-            {
-                bin_staged = true;
-                tracing::info!(
-                    "GOLDSMP binario v{} scaricato e sostituito atomicamente su disco.",
-                    latest_ver
-                );
+        // 3. Fallback: If Release assets are not yet built by GitHub Actions (or only a git tag/commit exists),
+        // pull and build directly from GitHub source so updating ALWAYS works immediately!
+        if !ui_updated || !bin_staged {
+            match self.pull_and_build_from_git(repo, latest_ver).await {
+                Ok((git_ui, git_bin)) => {
+                    if git_ui {
+                        ui_updated = true;
+                    }
+                    if git_bin {
+                        bin_staged = true;
+                    }
+                }
+                Err(e) => {
+                    if !ui_updated && !bin_staged {
+                        let mut st = self.status.lock().unwrap();
+                        st.state = "error".into();
+                        st.error = Some(format!(
+                            "Release v{} trovata ma asset in compilazione su GitHub Actions ({}). Riprova tra 1 minuto.",
+                            latest_ver, e
+                        ));
+                        return st.clone();
+                    }
+                }
             }
         }
 
@@ -305,6 +451,127 @@ impl AutoUpdater {
             st.state = "idle".into();
         }
         st.clone()
+    }
+
+    async fn pull_and_build_from_git(
+        &self,
+        repo: &str,
+        latest_ver: &str,
+    ) -> Result<(bool, bool), String> {
+        // Detect if current working dir is a git workspace, otherwise clone/pull into <data_dir>/git-updater-src
+        let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+        let src_dir = if cwd.join(".git").exists() && cwd.join("Cargo.toml").exists() {
+            cwd
+        } else {
+            let d = self.data_dir.join("git-updater-src");
+            if !d.join(".git").exists() {
+                let _ = std::fs::remove_dir_all(&d);
+                let clone_url = format!("https://github.com/{}.git", repo);
+                let out = tokio::process::Command::new("git")
+                    .args(["clone", "--depth", "1", &clone_url, &d.to_string_lossy()])
+                    .output()
+                    .await
+                    .map_err(|e| format!("git clone fallito: {}", e))?;
+                if !out.status.success() {
+                    return Err(String::from_utf8_lossy(&out.stderr).to_string());
+                }
+            }
+            d
+        };
+
+        // Fetch & pull latest changes from origin/main (or tag)
+        let _ = tokio::process::Command::new("git")
+            .args(["fetch", "--all", "--tags"])
+            .current_dir(&src_dir)
+            .output()
+            .await;
+        let _ = tokio::process::Command::new("git")
+            .args(["pull", "--ff-only", "origin", "main"])
+            .current_dir(&src_dir)
+            .output()
+            .await;
+
+        let mut ui_ok = false;
+        let mut bin_ok = false;
+
+        // Build Frontend and hot-swap into <data_dir>/ui-override
+        let fe_dir = src_dir.join("frontend");
+        if fe_dir.exists() {
+            if !fe_dir.join("node_modules").exists() {
+                let _ = tokio::process::Command::new("npm")
+                    .arg("install")
+                    .current_dir(&fe_dir)
+                    .output()
+                    .await;
+            }
+            if let Ok(out) = tokio::process::Command::new("npm")
+                .args(["run", "build"])
+                .current_dir(&fe_dir)
+                .output()
+                .await
+            {
+                if out.status.success() && fe_dir.join("dist").exists() {
+                    let final_dir = self.data_dir.join("ui-override");
+                    let tmp_dir = self.data_dir.join("ui-override-staging");
+                    let _ = std::fs::remove_dir_all(&tmp_dir);
+                    if copy_dir_recursive(&fe_dir.join("dist"), &tmp_dir).is_ok() {
+                        let _ = std::fs::write(tmp_dir.join(".version"), latest_ver);
+                        let _ = std::fs::remove_dir_all(&final_dir);
+                        if std::fs::rename(&tmp_dir, &final_dir).is_ok() {
+                            ui_ok = true;
+                            tracing::info!(
+                                "GOLDSMP UI v{} compilata da Git e attivata a caldo in ui-override!",
+                                latest_ver
+                            );
+                        }
+                    }
+                }
+            }
+        }
+
+        // Build Rust Binary and stage atomically over current_exe
+        let _ = std::fs::File::open(src_dir.join("src/api/mod.rs")).and_then(|f| {
+            f.set_modified(std::time::SystemTime::now())
+        });
+        let is_release = std::env::current_exe()
+            .ok()
+            .map(|p| p.to_string_lossy().contains("release"))
+            .unwrap_or(false);
+        let cargo_args: Vec<&str> = if is_release {
+            vec!["build", "--release"]
+        } else {
+            vec!["build"]
+        };
+        if let Ok(out) = tokio::process::Command::new("cargo")
+            .args(&cargo_args)
+            .current_dir(&src_dir)
+            .output()
+            .await
+        {
+            if out.status.success() {
+                let built_bin = if is_release {
+                    src_dir.join("target/release/goldsmp")
+                } else {
+                    src_dir.join("target/debug/goldsmp")
+                };
+                if built_bin.exists() {
+                    if let Ok(bytes) = std::fs::read(&built_bin) {
+                        if self.stage_binary_bytes(&bytes).is_ok() {
+                            bin_ok = true;
+                            tracing::info!(
+                                "GOLDSMP binario v{} compilato da Git e sostituito su disco!",
+                                latest_ver
+                            );
+                        }
+                    }
+                }
+            }
+        }
+
+        if !ui_ok && !bin_ok {
+            return Err("Build locale da Git non disponibile".into());
+        }
+        Ok((ui_ok, bin_ok))
     }
 
     async fn download_and_extract_ui(&self, url: &str, version: &str) -> Result<(), String> {
@@ -353,11 +620,14 @@ impl AutoUpdater {
             .bytes()
             .await
             .map_err(|e| e.to_string())?;
+        self.stage_binary_bytes(&bytes)
+    }
 
+    fn stage_binary_bytes(&self, bytes: &[u8]) -> Result<(), String> {
         let updates_dir = self.data_dir.join("updates");
         std::fs::create_dir_all(&updates_dir).map_err(|e| e.to_string())?;
         let staged_path = updates_dir.join("goldsmp.new");
-        std::fs::write(&staged_path, &bytes).map_err(|e| e.to_string())?;
+        std::fs::write(&staged_path, bytes).map_err(|e| e.to_string())?;
 
         #[cfg(unix)]
         {
@@ -372,7 +642,12 @@ impl AutoUpdater {
         // On Linux, atomically replacing the executable path while running does NOT interrupt
         // the currently running process or any child game server!
         if let Ok(current_exe) = std::env::current_exe() {
-            let sibling_tmp = current_exe.with_extension("new");
+            let clean_exe = current_exe
+                .to_string_lossy()
+                .trim_end_matches(" (deleted)")
+                .to_string();
+            let target_exe = PathBuf::from(clean_exe);
+            let sibling_tmp = target_exe.with_extension("new");
             if std::fs::copy(&staged_path, &sibling_tmp).is_ok() {
                 #[cfg(unix)]
                 {
@@ -383,11 +658,61 @@ impl AutoUpdater {
                         let _ = std::fs::set_permissions(&sibling_tmp, p);
                     }
                 }
-                let _ = std::fs::rename(&sibling_tmp, &current_exe);
+                let _ = std::fs::rename(&sibling_tmp, &target_exe);
             }
         }
         Ok(())
     }
+
+    /// Spawns a detached replacement process from the updated binary and exits the current one
+    /// so even non-systemd servers can switch to the new backend binary with 1 click.
+    pub fn trigger_self_restart(&self) -> Result<(), String> {
+        let current_exe = std::env::current_exe().map_err(|e| e.to_string())?;
+        let clean_exe = current_exe
+            .to_string_lossy()
+            .trim_end_matches(" (deleted)")
+            .to_string();
+        let staged_fallback = self.data_dir.join("updates").join("goldsmp.new");
+        let exe_to_run = if Path::new(&clean_exe).exists() {
+            PathBuf::from(&clean_exe)
+        } else if staged_fallback.exists() {
+            staged_fallback
+        } else {
+            return Err("Binario aggiornato non trovato su disco".into());
+        };
+
+        let args: Vec<String> = std::env::args().skip(1).collect();
+        let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(450)).await;
+            #[cfg(unix)]
+            {
+                use std::os::unix::process::CommandExt;
+                let mut cmd = std::process::Command::new(&exe_to_run);
+                cmd.args(&args).current_dir(&cwd);
+                // Replace current process image in-place using exec()!
+                let err = cmd.exec();
+                tracing::error!("exec() fallito durante self-restart: {}", err);
+            }
+            std::process::exit(0);
+        });
+        Ok(())
+    }
+}
+
+fn copy_dir_recursive(src: &Path, dst: &Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(dst)?;
+    for entry in std::fs::read_dir(src)? {
+        let entry = entry?;
+        let ty = entry.file_type()?;
+        if ty.is_dir() {
+            copy_dir_recursive(&entry.path(), &dst.join(entry.file_name()))?;
+        } else {
+            std::fs::copy(entry.path(), dst.join(entry.file_name()))?;
+        }
+    }
+    Ok(())
 }
 
 fn compare_semver(a: &str, b: &str) -> i32 {

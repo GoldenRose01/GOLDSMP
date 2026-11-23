@@ -197,6 +197,7 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/updater/check", post(ops_routes::updater_check))
         .route("/api/updater/apply", post(ops_routes::updater_apply))
         .route("/api/updater/config", put(ops_routes::updater_config))
+        .route("/api/updater/restart", post(ops_routes::updater_restart))
         // Embedded SPA Frontend (with zero-downtime hot-swap override)
         .fallback(static_handler)
         .layer(axum::extract::DefaultBodyLimit::max(10 * 1024 * 1024))

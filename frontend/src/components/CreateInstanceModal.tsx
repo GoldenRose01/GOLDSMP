@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { api } from '../api/client';
 import { AppTemplate, Instance } from '../types';
 import { getGameArt } from '../utils/gameArtwork';
+import { mbToUnitNumber, unitNumberToMb, useRamUnit } from '../utils/ramUnit';
 import { Boxes, Cpu, Gamepad2, Globe, Sliders, Sparkles, X, Zap } from 'lucide-react';
 
 interface CreateInstanceModalProps {
@@ -19,7 +20,8 @@ export const CreateInstanceModal: React.FC<CreateInstanceModalProps> = ({
   const [selectedTpl, setSelectedTpl] = useState<AppTemplate | null>(templates[0] || null);
   const [name, setName] = useState(templates[0]?.name || '');
   const [port, setPort] = useState<number>(templates[0]?.default_port || 25565);
-  const [maxMem, setMaxMem] = useState<number>(2048);
+  const [maxMem, setMaxMem] = useState<number>(4096);
+  const [ramUnit, setRamUnit] = useRamUnit();
   const [maxPlayers, setMaxPlayers] = useState<number>(30);
   const [autoStart, setAutoStart] = useState<boolean>(false);
   const [autoRestart, setAutoRestart] = useState<boolean>(true);
@@ -328,12 +330,49 @@ export const CreateInstanceModal: React.FC<CreateInstanceModalProps> = ({
                       />
                     </div>
                     <div className="field">
-                      <label>Limite RAM (MB)</label>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6 }}>
+                        <label>Limite RAM ({ramUnit})</label>
+                        <div className="pill-group" style={{ padding: 1 }}>
+                          <button
+                            type="button"
+                            className={`pill-btn ${ramUnit === 'MB' ? 'active' : ''}`}
+                            style={{ padding: '1px 7px', fontSize: 10.5 }}
+                            onClick={() => setRamUnit('MB')}
+                          >
+                            MB
+                          </button>
+                          <button
+                            type="button"
+                            className={`pill-btn ${ramUnit === 'GB' ? 'active' : ''}`}
+                            style={{ padding: '1px 7px', fontSize: 10.5 }}
+                            onClick={() => setRamUnit('GB')}
+                          >
+                            GB
+                          </button>
+                        </div>
+                      </div>
                       <input
                         type="number"
-                        value={maxMem}
-                        onChange={(e) => setMaxMem(Number(e.target.value))}
+                        step={ramUnit === 'GB' ? 0.5 : 256}
+                        min={ramUnit === 'GB' ? 0.5 : 256}
+                        value={mbToUnitNumber(maxMem, ramUnit)}
+                        onChange={(e) =>
+                          setMaxMem(unitNumberToMb(Number(e.target.value), ramUnit))
+                        }
                       />
+                      <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginTop: 2 }}>
+                        {[2048, 4096, 8192, 16384].map((mb) => (
+                          <button
+                            key={mb}
+                            type="button"
+                            className={`btn btn-sm ${maxMem === mb ? 'btn-primary' : 'btn-secondary'}`}
+                            style={{ padding: '1px 6px', fontSize: 10 }}
+                            onClick={() => setMaxMem(mb)}
+                          >
+                            {ramUnit === 'GB' ? `${mb / 1024} GB` : `${mb} MB`}
+                          </button>
+                        ))}
+                      </div>
                     </div>
                     <div className="field">
                       <label>Slot Giocatori Massimi</label>

@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { api, formatDuration } from '../api/client';
 import { HostSystemInfo, Instance } from '../types';
 import { getGameArt } from '../utils/gameArtwork';
+import { formatRamPair, formatRamValue, useRamUnit } from '../utils/ramUnit';
 import {
   Boxes,
   Cpu,
@@ -42,6 +43,7 @@ export const InstancesPage: React.FC<InstancesPageProps> = ({
   const [quickRepoUrl, setQuickRepoUrl] = useState('');
   const [quickBranch, setQuickBranch] = useState('main');
   const [deployingRepo, setDeployingRepo] = useState(false);
+  const [ramUnit, , toggleRamUnit] = useRamUnit();
 
   const runningCount = instances.filter((i) => i.status === 'running').length;
   const totalPlayers = instances.reduce((acc, i) => acc + i.active_players.length, 0);
@@ -182,14 +184,23 @@ export const InstancesPage: React.FC<InstancesPageProps> = ({
           </div>
           <div className="kpi-label">CPU Host ({sysInfo?.cpu_cores || 0} core)</div>
         </div>
-        <div className="card">
+        <div
+          className="card"
+          onClick={toggleRamUnit}
+          style={{ cursor: 'pointer' }}
+          title="Clicca per cambiare unità tra MB e GB"
+        >
           <div className="kpi-value">
             {sysInfo
-              ? `${(sysInfo.used_memory_mb / 1024).toFixed(1)} / ${(sysInfo.total_memory_mb / 1024).toFixed(1)} GB`
+              ? formatRamPair(sysInfo.used_memory_mb, sysInfo.total_memory_mb, ramUnit)
               : '--'}
           </div>
           <div className="kpi-label">
-            RAM Host (GOLDSMP: {sysInfo ? `${sysInfo.panel_memory_mb.toFixed(1)} MB` : '--'})
+            RAM Host (GOLDSMP:{' '}
+            {sysInfo
+              ? formatRamValue(sysInfo.panel_memory_mb, ramUnit, ramUnit === 'GB' ? 3 : 1)
+              : '--'}
+            ) • [{ramUnit}]
           </div>
         </div>
         <div className="card">
@@ -368,9 +379,9 @@ export const InstancesPage: React.FC<InstancesPageProps> = ({
                 </div>
                 <div className="progress-row">
                   <div className="progress-meta">
-                    <span>RAM</span>
+                    <span>RAM ({ramUnit})</span>
                     <span>
-                      {inst.memory_mb.toFixed(0)} / {inst.max_memory_mb} MB
+                      {formatRamPair(inst.memory_mb, inst.max_memory_mb, ramUnit)}
                     </span>
                   </div>
                   <div className="progress-track">

@@ -7,6 +7,7 @@ import { InstancesPage } from './pages/InstancesPage';
 import { InstanceDetailPage, InstanceTabId } from './pages/InstanceDetailPage';
 import { AnalyticsPage } from './pages/AnalyticsPage';
 import { AuditLogPage, SettingsPage, UsersPage, WebhooksPage } from './pages/OpsPages';
+import { formatRamValue, useRamUnit } from './utils/ramUnit';
 import {
   Activity,
   Archive,
@@ -48,9 +49,10 @@ export function App() {
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
 
-  // AMP-style Global Quick Search
+  // AMP-style Global Quick Search & RAM Unit (MB <-> GB)
   const [quickQuery, setQuickQuery] = useState('');
   const [quickOpen, setQuickOpen] = useState(false);
+  const [ramUnit, setRamUnit, toggleRamUnit] = useRamUnit();
 
   const notify = (msg: string) => {
     setToast(msg);
@@ -235,7 +237,7 @@ export function App() {
           <div className="brand-info">
             <span className="brand-name">{settings?.panel_name || 'GOLDSMP'}</span>
             <span className="brand-sub">
-              v{sysInfo?.panel_version || '1.6.1'} • ADS Rust
+              v{updateStatus?.active_ui_version || sysInfo?.panel_version || '1.7.0'} • ADS Rust
             </span>
           </div>
         </div>
@@ -369,8 +371,15 @@ export function App() {
         </nav>
 
         <div className="sidebar-footer">
-          <span className="ram-pill" title="Consumo RAM effettivo del pannello Rust">
-            {sysInfo ? `${sysInfo.panel_memory_mb.toFixed(1)} MB RAM` : 'Rust Engine'}
+          <span
+            className="ram-pill"
+            onClick={toggleRamUnit}
+            style={{ cursor: 'pointer' }}
+            title="Clicca per cambiare unità RAM tra MB e GB"
+          >
+            {sysInfo
+              ? `${formatRamValue(sysInfo.panel_memory_mb, ramUnit, ramUnit === 'GB' ? 3 : 1)} RAM`
+              : 'Rust Engine'}
           </span>
           <button className="btn btn-secondary btn-sm" onClick={logout} title="Esci">
             <LogOut size={14} />
@@ -468,16 +477,35 @@ export function App() {
             >
               <Plus size={14} strokeWidth={2.5} /> Nuova Istanza
             </button>
+            <div className="pill-group" title="Switch unità visualizzazione e input RAM (MB / GB)">
+              <button
+                type="button"
+                className={`pill-btn ${ramUnit === 'MB' ? 'active' : ''}`}
+                style={{ padding: '4px 9px', fontSize: 11.5 }}
+                onClick={() => setRamUnit('MB')}
+              >
+                MB
+              </button>
+              <button
+                type="button"
+                className={`pill-btn ${ramUnit === 'GB' ? 'active' : ''}`}
+                style={{ padding: '4px 9px', fontSize: 11.5 }}
+                onClick={() => setRamUnit('GB')}
+              >
+                GB
+              </button>
+            </div>
             {sysInfo && (
-              <div className="host-chip">
+              <div className="host-chip" onClick={toggleRamUnit} style={{ cursor: 'pointer' }} title="Clicca per alternare MB / GB">
                 <span>
                   CPU <strong>{sysInfo.cpu_usage_percent.toFixed(0)}%</strong>
                 </span>
                 <span>
                   RAM{' '}
                   <strong>
-                    {(sysInfo.used_memory_mb / 1024).toFixed(1)}/
-                    {(sysInfo.total_memory_mb / 1024).toFixed(0)}G
+                    {ramUnit === 'GB'
+                      ? `${(sysInfo.used_memory_mb / 1024).toFixed(1)}/${(sysInfo.total_memory_mb / 1024).toFixed(1)} GB`
+                      : `${sysInfo.used_memory_mb.toFixed(0)}/${sysInfo.total_memory_mb.toFixed(0)} MB`}
                   </strong>
                 </span>
                 <span>

@@ -17,6 +17,7 @@ import {
 } from '../types';
 import { Gauge } from '../components/Gauge';
 import { SparkChart } from '../components/SparkChart';
+import { formatRamValue, mbToUnitNumber, unitNumberToMb, useRamUnit } from '../utils/ramUnit';
 import {
   Activity,
   AlertTriangle,
@@ -94,6 +95,7 @@ export const InstanceDetailPage: React.FC<InstanceDetailPageProps> = ({
   const [panelUsers, setPanelUsers] = useState<User[]>([]);
   const [horizonInstalling, setHorizonInstalling] = useState(false);
   const [copiedIp, setCopiedIp] = useState(false);
+  const [ramUnit, setRamUnit] = useRamUnit();
 
   // Dedicated Loader & Version tab state
   const [loaderStatus, setLoaderStatus] = useState<McLoaderStatus | null>(null);
@@ -709,10 +711,10 @@ export const InstanceDetailPage: React.FC<InstanceDetailPageProps> = ({
               sublabel="Processo nativo"
             />
             <Gauge
-              label="Memoria RAM"
+              label={`Memoria RAM (${ramUnit})`}
               value={memPct}
-              displayValue={`${inst.memory_mb.toFixed(0)} MB`}
-              sublabel={`di ${inst.max_memory_mb} MB`}
+              displayValue={formatRamValue(inst.memory_mb, ramUnit)}
+              sublabel={`di ${formatRamValue(inst.max_memory_mb, ramUnit)}`}
               color="var(--success)"
             />
             <Gauge
@@ -739,10 +741,13 @@ export const InstanceDetailPage: React.FC<InstanceDetailPageProps> = ({
               maxOverride={100}
             />
             <SparkChart
-              title="Storico RAM Istanza (1h)"
-              unit="MB"
+              title={`Storico RAM Istanza (1h) [${ramUnit}]`}
+              unit={ramUnit}
               color="#10b981"
-              data={metrics.map((m) => ({ timestamp: m.timestamp, value: m.memory_mb }))}
+              data={metrics.map((m) => ({
+                timestamp: m.timestamp,
+                value: ramUnit === 'GB' ? Number((m.memory_mb / 1024).toFixed(2)) : m.memory_mb,
+              }))}
             />
           </div>
 
@@ -1072,8 +1077,47 @@ export const InstanceDetailPage: React.FC<InstanceDetailPageProps> = ({
                 />
               </div>
               <div className="field">
-                <label>RAM Massima Allocata (MB)</label>
-                <input type="number" value={cfgMaxMem} onChange={(e) => setCfgMaxMem(Number(e.target.value))} />
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6 }}>
+                  <label>RAM Massima Allocata ({ramUnit})</label>
+                  <div className="pill-group" style={{ padding: 1 }}>
+                    <button
+                      type="button"
+                      className={`pill-btn ${ramUnit === 'MB' ? 'active' : ''}`}
+                      style={{ padding: '1px 7px', fontSize: 10.5 }}
+                      onClick={() => setRamUnit('MB')}
+                    >
+                      MB
+                    </button>
+                    <button
+                      type="button"
+                      className={`pill-btn ${ramUnit === 'GB' ? 'active' : ''}`}
+                      style={{ padding: '1px 7px', fontSize: 10.5 }}
+                      onClick={() => setRamUnit('GB')}
+                    >
+                      GB
+                    </button>
+                  </div>
+                </div>
+                <input
+                  type="number"
+                  step={ramUnit === 'GB' ? 0.5 : 256}
+                  min={ramUnit === 'GB' ? 0.5 : 256}
+                  value={mbToUnitNumber(cfgMaxMem, ramUnit)}
+                  onChange={(e) => setCfgMaxMem(unitNumberToMb(Number(e.target.value), ramUnit))}
+                />
+                <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginTop: 2 }}>
+                  {[2048, 4096, 8192, 16384].map((mb) => (
+                    <button
+                      key={mb}
+                      type="button"
+                      className={`btn btn-sm ${cfgMaxMem === mb ? 'btn-primary' : 'btn-secondary'}`}
+                      style={{ padding: '1px 6px', fontSize: 10 }}
+                      onClick={() => setCfgMaxMem(mb)}
+                    >
+                      {ramUnit === 'GB' ? `${mb / 1024} GB` : `${mb} MB`}
+                    </button>
+                  ))}
+                </div>
               </div>
               <div className="field">
                 <label>Eseguibile Nativo</label>
