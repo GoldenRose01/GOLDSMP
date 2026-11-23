@@ -147,6 +147,9 @@ export function App() {
     ? [
         { id: 'status', label: 'Stato & Metriche', icon: Activity },
         { id: 'console', label: 'Console Live', icon: Terminal },
+        ...(selectedInstance.template_id === 'minecraft-java'
+          ? [{ id: 'loader' as InstanceTabId, label: 'Loader & Versione', icon: Package }]
+          : []),
         ...(selectedInstance.template_id === 'horizon-mc' || selectedInstance.category === 'horizon'
           ? [{ id: 'horizon' as InstanceTabId, label: 'Horizon MC (Rust)', icon: Zap }]
           : []),

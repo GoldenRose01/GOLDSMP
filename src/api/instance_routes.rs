@@ -1206,5 +1206,60 @@ pub async fn install_minecraft_jar(
     Ok(Json(res))
 }
 
+#[derive(Deserialize)]
+pub struct LoaderQuery {
+    pub loader: Option<String>,
+}
+
+pub async fn get_minecraft_loader_info(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Path(id): Path<String>,
+    Query(q): Query<LoaderQuery>,
+) -> Result<Json<crate::mc_installer::McLoaderStatus>, (StatusCode, String)> {
+    if !auth.can_access_instance(&id) {
+        return Err((StatusCode::FORBIDDEN, "Accesso negato".into()));
+    }
+    let inst = state
+        .pm
+        .load_instance(&id)
+        .ok_or((StatusCode::NOT_FOUND, "Istanza non trovata".into()))?;
+    let active_loader = inst
+        .settings
+        .get("mc_loader")
+        .cloned()
+        .unwrap_or_else(|| "paper".into());
+    let active_version = inst
+        .settings
+        .get("mc_version")
+        .cloned()
+        .unwrap_or_else(|| "latest".into());
+    let target_loader = q.loader.unwrap_or_else(|| active_loader.clone());
+
+    let jar_path = PathBuf::from(&inst.work_dir).join("server.jar");
+    let (jar_exists, jar_size_bytes) = match std::fs::metadata(&jar_path) {
+        Ok(m) if m.is_file() => (true, m.len()),
+        _ => (false, 0),
+    };
+
+    let mut available_versions =
+        crate::mc_installer::get_loader_versions(&state.http, &target_loader)
+            .await
+            .unwrap_or_else(|_| vec!["26.3".into(), "1.21.4".into(), "1.21.3".into(), "1.21.1".into(), "1.20.4".into()]);
+    if !available_versions.iter().any(|v| v == "26.3") {
+        available_versions.insert(0, "26.3".into());
+    }
+
+    Ok(Json(crate::mc_installer::McLoaderStatus {
+        loader: target_loader,
+        available_versions,
+        jar_exists,
+        jar_size_bytes,
+        active_loader,
+        active_version,
+    }))
+}
+
+
 
 

@@ -9,6 +9,7 @@ import {
   GDrivePublicStatus,
   InstalledModEntry,
   Instance,
+  McLoaderStatus,
   MetricPoint,
   ModrinthHit,
   ScheduledTask,
@@ -22,6 +23,8 @@ import {
   Archive,
   ArrowLeft,
   CalendarClock,
+  Check,
+  Copy,
   Download,
   FileText,
   Folder,
@@ -49,6 +52,7 @@ import {
 export type InstanceTabId =
   | 'status'
   | 'console'
+  | 'loader'
   | 'horizon'
   | 'webservice'
   | 'config'
@@ -89,6 +93,13 @@ export const InstanceDetailPage: React.FC<InstanceDetailPageProps> = ({
   const [ftpInfo, setFtpInfo] = useState<FtpInfo | null>(null);
   const [panelUsers, setPanelUsers] = useState<User[]>([]);
   const [horizonInstalling, setHorizonInstalling] = useState(false);
+  const [copiedIp, setCopiedIp] = useState(false);
+
+  // Dedicated Loader & Version tab state
+  const [loaderStatus, setLoaderStatus] = useState<McLoaderStatus | null>(null);
+  const [loaderPick, setLoaderPick] = useState<string>('paper');
+  const [versionPick, setVersionPick] = useState<string>('latest');
+  const [jarDownloading, setJarDownloading] = useState(false);
 
   // Per-instance user creation form
   const [newUsername, setNewUsername] = useState('');
@@ -225,6 +236,15 @@ export const InstanceDetailPage: React.FC<InstanceDetailPageProps> = ({
 
   // Tab data loaders
   useEffect(() => {
+    if (tab === 'status') {
+      loadFtpInfo();
+      if (inst?.template_id === 'minecraft-java') {
+        loadLoaderInfo();
+      }
+    }
+    if (tab === 'loader') {
+      loadLoaderInfo(loaderPick);
+    }
     if (tab === 'files' || tab === 'ftp' || tab === 'horizon') {
       loadFiles(curPath);
       loadFtpInfo();
@@ -237,6 +257,20 @@ export const InstanceDetailPage: React.FC<InstanceDetailPageProps> = ({
       if (modHits.length === 0) searchMods();
     }
   }, [tab, curPath, modsFolder]);
+
+  const loadLoaderInfo = async (overrideLoader?: string) => {
+    try {
+      const q = overrideLoader ? `?loader=${encodeURIComponent(overrideLoader)}` : '';
+      const info = await api<McLoaderStatus>(
+        `/api/instances/${instanceId}/minecraft/loader-info${q}`
+      );
+      setLoaderStatus(info);
+      if (!overrideLoader) {
+        setLoaderPick(info.active_loader || 'paper');
+        setVersionPick(info.active_version || info.available_versions[0] || 'latest');
+      }
+    } catch {}
+  };
 
   const loadInstalledMods = async (folder: string, checkUpdates: boolean) => {
     setModsScanning(true);
@@ -501,6 +535,9 @@ export const InstanceDetailPage: React.FC<InstanceDetailPageProps> = ({
         {[
           { id: 'status', label: 'Stato & Metriche', icon: Activity },
           { id: 'console', label: 'Console Live', icon: Terminal },
+          ...(inst.template_id === 'minecraft-java'
+            ? [{ id: 'loader', label: 'Loader & Versione', icon: Download }]
+            : []),
           ...(inst.template_id === 'horizon-mc' || inst.category === 'horizon'
             ? [{ id: 'horizon', label: 'Horizon MC (Rust)', icon: Zap }]
             : []),
@@ -528,61 +565,139 @@ export const InstanceDetailPage: React.FC<InstanceDetailPageProps> = ({
         })}
       </div>
 
-      {/* TAB 1: STATUS (AMP-Style Connection Banner + Arc Gauges + Live Charts) */}
+      {/* TAB 1: STATUS (HOME DELL'ISTANZA CON SERVER COPIA-INCOLLA + GAUGE + GRAFICI) */}
       {tab === 'status' && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
-          {/* AMP-style Connection Info Banner */}
+          {/* Prominent Copy-Paste Server Address Card on Instance Home */}
           <div
             className="card"
             style={{
-              padding: '12px 18px',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              gap: 14,
-              flexWrap: 'wrap',
+              padding: '16px 20px',
+              border: '1px solid rgba(245, 185, 50, 0.45)',
               background:
-                'linear-gradient(90deg, rgba(245, 185, 50, 0.1) 0%, rgba(15, 15, 22, 0.95) 60%)',
+                'linear-gradient(135deg, rgba(245, 185, 50, 0.14) 0%, rgba(15, 15, 22, 0.96) 65%)',
             }}
           >
-            <div style={{ display: 'flex', gap: 22, flexWrap: 'wrap', fontFamily: 'var(--font-mono)', fontSize: 12.5 }}>
-              <div>
-                <span style={{ color: 'var(--text-muted)', marginRight: 6 }}>ENDPOINT:</span>
-                <strong style={{ color: '#fff4d2' }}>
-                  {window.location.hostname || '127.0.0.1'}:{inst.port}
-                </strong>
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                gap: 16,
+                flexWrap: 'wrap',
+              }}
+            >
+              <div style={{ flex: '1 1 360px' }}>
+                <div
+                  style={{
+                    fontFamily: 'var(--font-display)',
+                    fontSize: 13,
+                    fontWeight: 700,
+                    letterSpacing: '0.08em',
+                    textTransform: 'uppercase',
+                    color: 'var(--accent-hover)',
+                    marginBottom: 6,
+                  }}
+                >
+                  Indirizzo Server (Clicca o Copia-Incolla nel Gioco)
+                </div>
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                  <input
+                    readOnly
+                    value={`${window.location.hostname || '127.0.0.1'}:${inst.port}`}
+                    onFocus={(e) => e.currentTarget.select()}
+                    onClick={(e) => {
+                      e.currentTarget.select();
+                      navigator.clipboard?.writeText(
+                        `${window.location.hostname || '127.0.0.1'}:${inst.port}`
+                      );
+                      setCopiedIp(true);
+                      setTimeout(() => setCopiedIp(false), 2200);
+                      onNotify('Indirizzo server copiato negli appunti!');
+                    }}
+                    style={{
+                      fontFamily: 'var(--font-mono)',
+                      fontSize: 16,
+                      fontWeight: 700,
+                      color: '#fff4d2',
+                      background: 'rgba(0, 0, 0, 0.45)',
+                      border: '1px solid var(--border-strong)',
+                      padding: '8px 14px',
+                      width: 290,
+                      cursor: 'pointer',
+                    }}
+                  />
+                  <button
+                    type="button"
+                    className="btn btn-primary"
+                    onClick={() => {
+                      navigator.clipboard?.writeText(
+                        `${window.location.hostname || '127.0.0.1'}:${inst.port}`
+                      );
+                      setCopiedIp(true);
+                      setTimeout(() => setCopiedIp(false), 2200);
+                      onNotify('Indirizzo server copiato negli appunti!');
+                    }}
+                  >
+                    {copiedIp ? <Check size={15} /> : <Copy size={15} />}
+                    {copiedIp ? 'Copiato!' : 'Copia IP:Porta'}
+                  </button>
+                </div>
               </div>
-              <div>
-                <span style={{ color: 'var(--text-muted)', marginRight: 6 }}>FTP:</span>
-                <strong style={{ color: 'var(--arc-cyan)' }}>
-                  ftp://{window.location.hostname || '127.0.0.1'}:{ftpInfo?.port || 2121}
-                </strong>
-              </div>
-              <div>
-                <span style={{ color: 'var(--text-muted)', marginRight: 6 }}>PID:</span>
-                <strong>{inst.pid ?? '--'}</strong>
-              </div>
-            </div>
-            <div style={{ display: 'flex', gap: 8 }}>
-              <button
-                type="button"
-                className="btn btn-secondary btn-sm"
-                onClick={() => {
-                  navigator.clipboard?.writeText(
-                    `${window.location.hostname || '127.0.0.1'}:${inst.port}`
-                  );
-                  onNotify('Indirizzo server copiato negli appunti!');
+
+              <div
+                style={{
+                  display: 'flex',
+                  gap: 18,
+                  flexWrap: 'wrap',
+                  alignItems: 'center',
+                  fontFamily: 'var(--font-mono)',
+                  fontSize: 12.5,
                 }}
               >
-                Copia Indirizzo
-              </button>
-              <button
-                type="button"
-                className="btn btn-secondary btn-sm"
-                onClick={() => setTab('console')}
-              >
-                <Terminal size={13} /> Apri Console
-              </button>
+                <div>
+                  <div style={{ color: 'var(--text-muted)', fontSize: 11 }}>ACCESSO FTP</div>
+                  <strong style={{ color: 'var(--arc-cyan)' }}>
+                    ftp://{window.location.hostname || '127.0.0.1'}:{ftpInfo?.port || 2121}
+                  </strong>
+                </div>
+                {inst.template_id === 'minecraft-java' && (
+                  <div>
+                    <div style={{ color: 'var(--text-muted)', fontSize: 11 }}>LOADER & JAR</div>
+                    <strong
+                      style={{
+                        color: loaderStatus?.jar_exists ? 'var(--success)' : 'var(--warning)',
+                      }}
+                    >
+                      {(inst.settings['mc_loader'] || 'paper').toUpperCase()}{' '}
+                      {inst.settings['mc_version'] || 'latest'}{' '}
+                      {loaderStatus
+                        ? loaderStatus.jar_exists
+                          ? `(${formatBytes(loaderStatus.jar_size_bytes)})`
+                          : '(JAR mancante)'
+                        : ''}
+                    </strong>
+                  </div>
+                )}
+                <div style={{ display: 'flex', gap: 8 }}>
+                  {inst.template_id === 'minecraft-java' && (
+                    <button
+                      type="button"
+                      className="btn btn-secondary btn-sm"
+                      onClick={() => setTab('loader')}
+                    >
+                      <Download size={13} /> Loader & Versione
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    className="btn btn-secondary btn-sm"
+                    onClick={() => setTab('console')}
+                  >
+                    <Terminal size={13} /> Console Live
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
 
@@ -736,6 +851,195 @@ export const InstanceDetailPage: React.FC<InstanceDetailPageProps> = ({
                 <Send size={14} /> Invia
               </button>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* TAB DEDICATA: LOADER & VERSIONE (PAPER / PURPUR / FABRIC / VANILLA + SCARICA SUBITO) */}
+      {tab === 'loader' && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+          <div className="card">
+            <div className="card-header" style={{ flexWrap: 'wrap' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <Download size={18} color="var(--accent)" />
+                <span className="card-title">
+                  Loader & Versione Minecraft — Scarica & Carica Subito server.jar
+                </span>
+                {loaderStatus && (
+                  <span
+                    className={`status-badge ${
+                      loaderStatus.jar_exists ? 'status-running' : 'status-crashed'
+                    }`}
+                  >
+                    <span className="status-dot" />
+                    {loaderStatus.jar_exists
+                      ? `server.jar Presente (${formatBytes(loaderStatus.jar_size_bytes)})`
+                      : 'server.jar Non Trovato'}
+                  </span>
+                )}
+              </div>
+            </div>
+
+            <p style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 18 }}>
+              Seleziona il <strong>Loader</strong> (PaperMC per plugin, Fabric per mod <code>/mods</code>, Purpur o
+              Vanilla ufficiale Mojang), scegli la <strong>Versione</strong> e premi{' '}
+              <strong>Scarica &amp; Carica server.jar Subito</strong>: il file viene scaricato direttamente nella
+              cartella dell&apos;istanza con <code>eula=true</code> già attivo.
+            </p>
+
+            {/* 4 Loader Visual Cards */}
+            <div className="grid-4" style={{ marginBottom: 18 }}>
+              {[
+                {
+                  id: 'paper',
+                  title: 'PaperMC',
+                  sub: 'Consigliato per Plugin (/plugins) e massime prestazioni',
+                  badge: 'PLUGIN • HIGH TPS',
+                },
+                {
+                  id: 'fabric',
+                  title: 'Fabric Loader',
+                  sub: 'Consigliato per Mod (/mods) e ottimizzazioni Lithium/Sodium',
+                  badge: 'MODS • LEGGERO',
+                },
+                {
+                  id: 'purpur',
+                  title: 'PurpurMC',
+                  sub: 'Fork avanzato di Paper con centinaia di opzioni gameplay extra',
+                  badge: 'PAPER FORK • EXTRA',
+                },
+                {
+                  id: 'vanilla',
+                  title: 'Mojang Vanilla',
+                  sub: 'Server ufficiale originale Mojang 100% puro senza modifiche',
+                  badge: 'UFFICIALE MOJANG',
+                },
+              ].map((l) => {
+                const active = loaderPick === l.id;
+                return (
+                  <button
+                    key={l.id}
+                    type="button"
+                    onClick={() => {
+                      setLoaderPick(l.id);
+                      loadLoaderInfo(l.id);
+                    }}
+                    className="card"
+                    style={{
+                      textAlign: 'left',
+                      padding: 15,
+                      cursor: 'pointer',
+                      border: active
+                        ? '2px solid var(--accent)'
+                        : '1px solid var(--border-subtle)',
+                      background: active
+                        ? 'linear-gradient(135deg, rgba(245, 185, 50, 0.2), rgba(15, 15, 22, 0.95))'
+                        : undefined,
+                    }}
+                  >
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                      <span style={{ fontWeight: 700, fontSize: 15, color: '#fff4d2' }}>{l.title}</span>
+                      <span
+                        style={{
+                          fontSize: 9.5,
+                          fontFamily: 'var(--font-mono)',
+                          padding: '2px 6px',
+                          borderRadius: 99,
+                          background: 'rgba(245, 185, 50, 0.14)',
+                          color: 'var(--accent-hover)',
+                        }}
+                      >
+                        {l.badge}
+                      </span>
+                    </div>
+                    <div style={{ fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.38 }}>
+                      {l.sub}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Version Selector + Immediate Download Button */}
+            <div
+              className="card"
+              style={{
+                background: 'var(--bg-input)',
+                border: '1px solid var(--border-strong)',
+                padding: 18,
+              }}
+            >
+              <div className="grid-3" style={{ alignItems: 'flex-end' }}>
+                <div className="field">
+                  <label>Seleziona Versione Disponibile ({loaderPick.toUpperCase()})</label>
+                  <select
+                    value={versionPick}
+                    onChange={(e) => setVersionPick(e.target.value)}
+                  >
+                    <option value="latest">latest (Ultima stabile disponibile)</option>
+                    {(loaderStatus?.available_versions || []).map((v) => (
+                      <option key={v} value={v}>
+                        Minecraft {v}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="field">
+                  <label>Oppure digita Versione Manuale (es. 26.3 / 1.21.4)</label>
+                  <input
+                    value={versionPick}
+                    onChange={(e) => setVersionPick(e.target.value)}
+                    placeholder="latest"
+                  />
+                </div>
+
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <button
+                    type="button"
+                    className="btn btn-primary"
+                    style={{ width: '100%', padding: '10px 18px', fontSize: 14 }}
+                    disabled={jarDownloading}
+                    onClick={async () => {
+                      setJarDownloading(true);
+                      try {
+                        const res = await api<{
+                          loader: string;
+                          mc_version: string;
+                          build_info: string;
+                          size_bytes: number;
+                        }>(`/api/instances/${instanceId}/minecraft/install-jar`, {
+                          method: 'POST',
+                          body: JSON.stringify({
+                            loader: loaderPick,
+                            version: versionPick || 'latest',
+                          }),
+                        });
+                        setCfgSettings((s) => ({
+                          ...s,
+                          mc_loader: res.loader,
+                          mc_version: res.mc_version,
+                        }));
+                        onNotify(
+                          `server.jar installato: ${res.loader.toUpperCase()} ${res.mc_version} (${res.build_info}, ${formatBytes(res.size_bytes)})!`
+                        );
+                        await loadLoaderInfo(res.loader);
+                        loadInstance();
+                      } catch (err: any) {
+                        onNotify(`Errore download server.jar: ${err.message}`);
+                      } finally {
+                        setJarDownloading(false);
+                      }
+                    }}
+                  >
+                    <Download size={16} />
+                    {jarDownloading
+                      ? 'Download in corso...'
+                      : `Scarica & Carica server.jar Subito`}
+                  </button>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
       )}

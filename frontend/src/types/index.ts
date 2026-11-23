@@ -283,6 +283,16 @@ export interface GDrivePublicStatus {
   connected_email?: string;
 }
 
+export interface McLoaderStatus {
+  loader: string;
+  available_versions: string[];
+  jar_exists: boolean;
+  jar_size_bytes: number;
+  active_loader: string;
+  active_version: string;
+}
+
+
 
 
 

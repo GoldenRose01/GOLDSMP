@@ -9,6 +9,106 @@ pub struct McInstallResult {
     pub size_bytes: u64,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct McLoaderStatus {
+    pub loader: String,
+    pub available_versions: Vec<String>,
+    pub jar_exists: bool,
+    pub jar_size_bytes: u64,
+    pub active_loader: String,
+    pub active_version: String,
+}
+
+pub async fn get_loader_versions(
+    http: &reqwest::Client,
+    loader: &str,
+) -> Result<Vec<String>, String> {
+    let clean = loader.trim().to_lowercase();
+    match clean.as_str() {
+        "purpur" => {
+            let j: serde_json::Value = http
+                .get("https://api.purpurmc.org/v2/purpur")
+                .header("User-Agent", "GOLDSMP/1.0")
+                .send()
+                .await
+                .map_err(|e| e.to_string())?
+                .json()
+                .await
+                .map_err(|e| e.to_string())?;
+            let mut list: Vec<String> = j
+                .get("versions")
+                .and_then(|v| v.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|x| x.as_str().map(|s| s.to_string()))
+                        .collect()
+                })
+                .unwrap_or_default();
+            list.reverse();
+            Ok(list)
+        }
+        "fabric" => {
+            let arr: Vec<serde_json::Value> = http
+                .get("https://meta.fabricmc.net/v2/versions/game")
+                .header("User-Agent", "GOLDSMP/1.0")
+                .send()
+                .await
+                .map_err(|e| e.to_string())?
+                .json()
+                .await
+                .map_err(|e| e.to_string())?;
+            Ok(arr
+                .into_iter()
+                .filter(|v| v.get("stable").and_then(|b| b.as_bool()) == Some(true))
+                .filter_map(|v| v.get("version").and_then(|s| s.as_str()).map(|s| s.to_string()))
+                .collect())
+        }
+        "vanilla" => {
+            let j: serde_json::Value = http
+                .get("https://piston-meta.mojang.com/mc/game/version_manifest_v2.json")
+                .header("User-Agent", "GOLDSMP/1.0")
+                .send()
+                .await
+                .map_err(|e| e.to_string())?
+                .json()
+                .await
+                .map_err(|e| e.to_string())?;
+            Ok(j.get("versions")
+                .and_then(|v| v.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter(|x| x.get("type").and_then(|t| t.as_str()) == Some("release"))
+                        .filter_map(|x| x.get("id").and_then(|s| s.as_str()).map(|s| s.to_string()))
+                        .take(40)
+                        .collect()
+                })
+                .unwrap_or_default())
+        }
+        _ => {
+            let j: serde_json::Value = http
+                .get("https://api.papermc.io/v2/projects/paper")
+                .header("User-Agent", "GOLDSMP/1.0")
+                .send()
+                .await
+                .map_err(|e| e.to_string())?
+                .json()
+                .await
+                .map_err(|e| e.to_string())?;
+            let mut list: Vec<String> = j
+                .get("versions")
+                .and_then(|v| v.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|x| x.as_str().map(|s| s.to_string()))
+                        .collect()
+                })
+                .unwrap_or_default();
+            list.reverse();
+            Ok(list)
+        }
+    }
+}
+
 /// Automatically downloads `server.jar` into `work_dir` for the chosen loader (`paper`, `purpur`, `fabric`, `vanilla`)
 /// and Minecraft version (`latest` or specific like `26.3`, `1.21.4`, etc.).
 pub async fn download_minecraft_server_jar(
