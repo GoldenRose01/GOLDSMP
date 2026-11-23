@@ -1,6 +1,6 @@
 [package]
 name = "goldsmp"
-version = "1.0.0"
+version = "1.6.1"
 edition = "2021"
 description = "GOLDSMP — Greatest Optimized Lightweight Dedicated Server Management Panel written in Rust"
 

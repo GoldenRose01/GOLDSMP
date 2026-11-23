@@ -234,7 +234,9 @@ export function App() {
           </div>
           <div className="brand-info">
             <span className="brand-name">{settings?.panel_name || 'GOLDSMP'}</span>
-            <span className="brand-sub">ADS Rust • Mark LXXXV</span>
+            <span className="brand-sub">
+              v{sysInfo?.panel_version || '1.6.1'} • ADS Rust
+            </span>
           </div>
         </div>
 
