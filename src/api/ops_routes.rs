@@ -1041,8 +1041,108 @@ pub async fn gdrive_auth_url(
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
     let cfg = crate::gdrive_backup::load_config(&state.db);
     let url = crate::gdrive_backup::build_oauth_url(&cfg)
-        .map_err(|e| (StatusCode::BAD_REQUEST, e))?;
+        .unwrap_or_else(|_| "/api/gdrive/login".to_string());
     Ok(Json(serde_json::json!({ "url": url })))
+}
+
+pub async fn gdrive_direct_login_page(
+    State(state): State<AppState>,
+) -> axum::response::Html<String> {
+    let cfg = crate::gdrive_backup::load_config(&state.db);
+    axum::response::Html(crate::gdrive_backup::build_direct_login_portal_html(&cfg))
+}
+
+pub async fn gdrive_quick_connect(
+    State(state): State<AppState>,
+) -> axum::response::Html<String> {
+    match crate::gdrive_backup::connect_via_gdrive_cli(&state.db).await {
+        Ok(cfg) => {
+            let email = cfg.connected_email.unwrap_or_else(|| "Google Drive (1-Click)".into());
+            state.db.log_audit(
+                "gdrive",
+                "GDRIVE_QUICK_CONNECT",
+                &email,
+                "Google Drive connesso in automatico (1-Click)",
+                "cloud",
+            );
+            axum::response::Html(format!(
+                "<html><body style='background:#0d0d12;color:#fff4d2;font-family:sans-serif;padding:40px;text-align:center'><h1 style='color:#f5b932'>Google Drive Connesso!</h1><p>Account attivo: <strong>{}</strong></p><p>I backup verranno salvati in <code>{}/&lt;nome_istanza&gt;_backup</code> (max {} mantenuti).</p><script>setTimeout(()=>{{if(window.opener){{window.close();}}else{{window.location.href='/';}}}}, 1800);</script><a href='/' style='color:#38bdf8'>Torna subito a GOLDSMP</a></body></html>",
+                email, cfg.server_folder_name, cfg.max_backups_per_instance
+            ))
+        }
+        Err(e) => axum::response::Html(format!(
+            "<html><body style='background:#0d0d12;color:#f87171;font-family:sans-serif;padding:40px;text-align:center'><h2>Sessione 1-Click non disponibile</h2><p>{}</p><p><a href='/api/gdrive/login' style='color:#f5b932'>Torna alle Opzioni di Login Google Drive</a></p></body></html>",
+            e
+        )),
+    }
+}
+
+#[derive(Deserialize)]
+pub struct DirectOAuthQuery {
+    pub client_id: String,
+    pub client_secret: Option<String>,
+    pub redirect_uri: Option<String>,
+}
+
+pub async fn gdrive_direct_oauth(
+    State(state): State<AppState>,
+    Query(q): Query<DirectOAuthQuery>,
+) -> axum::response::Html<String> {
+    let mut cfg = crate::gdrive_backup::load_config(&state.db);
+    cfg.client_id = q.client_id.trim().to_string();
+    if let Some(sec) = q.client_secret {
+        if !sec.trim().is_empty() {
+            cfg.client_secret = sec.trim().to_string();
+        }
+    }
+    if let Some(ru) = q.redirect_uri {
+        if !ru.trim().is_empty() {
+            cfg.redirect_uri = ru.trim().to_string();
+        }
+    }
+    let _ = crate::gdrive_backup::save_config(&state.db, &cfg);
+    match crate::gdrive_backup::build_oauth_url(&cfg) {
+        Ok(url) => axum::response::Html(format!(
+            "<html><head><meta http-equiv='refresh' content='0;url={url}'/></head><body style='background:#0d0d12;color:#fff4d2;font-family:sans-serif;padding:40px;text-align:center'><h2>Apertura Pagina Login Google...</h2><script>window.location.replace({url_js});</script><a href='{url}' style='color:#f5b932'>Continua su Google</a></body></html>",
+            url = url,
+            url_js = serde_json::to_string(&url).unwrap_or_default()
+        )),
+        Err(e) => axum::response::Html(format!(
+            "<html><body style='background:#0d0d12;color:#f87171;font-family:sans-serif;padding:40px'><h2>Errore</h2><p>{}</p><a href='/api/gdrive/login' style='color:#f5b932'>Indietro</a></body></html>",
+            e
+        )),
+    }
+}
+
+#[derive(Deserialize)]
+pub struct TokenLoginQuery {
+    pub access_token: String,
+}
+
+pub async fn gdrive_token_login(
+    State(state): State<AppState>,
+    Query(q): Query<TokenLoginQuery>,
+) -> axum::response::Html<String> {
+    match crate::gdrive_backup::connect_via_direct_token(&state.db, &state.http, &q.access_token).await {
+        Ok(cfg) => {
+            let email = cfg.connected_email.unwrap_or_else(|| "Account Google".into());
+            state.db.log_audit(
+                "gdrive",
+                "GDRIVE_TOKEN_LOGIN",
+                &email,
+                "Google Drive connesso tramite Access Token diretto",
+                "cloud",
+            );
+            axum::response::Html(format!(
+                "<html><body style='background:#0d0d12;color:#fff4d2;font-family:sans-serif;padding:40px;text-align:center'><h1 style='color:#f5b932'>Google Drive Connesso!</h1><p>Account collegato: <strong>{}</strong></p><script>setTimeout(()=>{{if(window.opener){{window.close();}}else{{window.location.href='/';}}}}, 1800);</script><a href='/' style='color:#38bdf8'>Torna subito a GOLDSMP</a></body></html>",
+                email
+            ))
+        }
+        Err(e) => axum::response::Html(format!(
+            "<html><body style='background:#0d0d12;color:#f87171;font-family:sans-serif;padding:40px'><h2>Errore Token</h2><p>{}</p><a href='/api/gdrive/login' style='color:#f5b932'>Riprova</a></body></html>",
+            e
+        )),
+    }
 }
 
 #[derive(Deserialize)]

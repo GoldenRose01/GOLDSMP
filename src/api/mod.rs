@@ -158,10 +158,14 @@ pub fn build_router(state: AppState) -> Router {
             "/api/instances/:id/backups/:backup_id/upload-gdrive",
             post(ops_routes::upload_backup_to_gdrive),
         )
-        // Google Drive Cloud Backup & OAuth2 Login
+        // Google Drive Cloud Backup & Direct OAuth2 Login Portal
         .route("/api/gdrive/status", get(ops_routes::gdrive_status))
         .route("/api/gdrive/config", put(ops_routes::gdrive_update_config))
         .route("/api/gdrive/auth-url", get(ops_routes::gdrive_auth_url))
+        .route("/api/gdrive/login", get(ops_routes::gdrive_direct_login_page))
+        .route("/api/gdrive/quick-connect", get(ops_routes::gdrive_quick_connect))
+        .route("/api/gdrive/direct-oauth", get(ops_routes::gdrive_direct_oauth))
+        .route("/api/gdrive/token-login", get(ops_routes::gdrive_token_login))
         .route("/api/gdrive/callback", get(ops_routes::gdrive_callback))
         .route("/api/gdrive/disconnect", post(ops_routes::gdrive_disconnect))
         // Modrinth Store, Personal Account Login & Installed Mods Folder Manager / Auto-Updater

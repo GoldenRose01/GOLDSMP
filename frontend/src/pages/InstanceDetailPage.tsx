@@ -2849,6 +2849,42 @@ export const InstanceDetailPage: React.FC<InstanceDetailPageProps> = ({
                   <Save size={14} /> Salva Configurazione
                 </button>
 
+                <button
+                  type="button"
+                  className="btn btn-primary btn-sm"
+                  style={{
+                    boxShadow: '0 0 16px rgba(245, 185, 50, 0.35)',
+                  }}
+                  onClick={async () => {
+                    try {
+                      await api('/api/gdrive/config', {
+                        method: 'PUT',
+                        body: JSON.stringify({
+                          enabled: gdEnabled,
+                          client_id: gdClientId,
+                          client_secret: gdClientSecret || undefined,
+                          redirect_uri: gdRedirectUri,
+                          server_folder_name: gdServerFolder,
+                          max_backups_per_instance: Number(gdMaxBackups) || 5,
+                        }),
+                      });
+                    } catch {}
+                    const popup = window.open(
+                      '/api/gdrive/login',
+                      'goldsmp_gdrive_login',
+                      'width=680,height=760'
+                    );
+                    const timer = setInterval(async () => {
+                      if (!popup || popup.closed) {
+                        clearInterval(timer);
+                        loadBackups();
+                      }
+                    }, 1200);
+                  }}
+                >
+                  <KeyRound size={14} /> Login Diretto Google Drive (Pagina Opzioni Accesso)
+                </button>
+
                 {gdrive?.connected ? (
                   <button
                     type="button"
@@ -2866,10 +2902,9 @@ export const InstanceDetailPage: React.FC<InstanceDetailPageProps> = ({
                 ) : (
                   <button
                     type="button"
-                    className="btn btn-primary btn-sm"
+                    className="btn btn-secondary btn-sm"
                     onClick={async () => {
                       try {
-                        // Save config first, then open Google OAuth2 login
                         await api('/api/gdrive/config', {
                           method: 'PUT',
                           body: JSON.stringify({
@@ -2882,13 +2917,23 @@ export const InstanceDetailPage: React.FC<InstanceDetailPageProps> = ({
                           }),
                         });
                         const res = await api<{ url: string }>('/api/gdrive/auth-url');
-                        window.open(res.url, '_blank');
+                        const popup = window.open(
+                          res.url,
+                          'goldsmp_gdrive_oauth',
+                          'width=680,height=760'
+                        );
+                        const timer = setInterval(() => {
+                          if (!popup || popup.closed) {
+                            clearInterval(timer);
+                            loadBackups();
+                          }
+                        }, 1200);
                       } catch (err: any) {
                         onNotify(err.message);
                       }
                     }}
                   >
-                    <Globe size={14} /> Connetti Google Drive (Login OAuth2)
+                    <Globe size={14} /> Connetti OAuth2 Rapido
                   </button>
                 )}
               </div>

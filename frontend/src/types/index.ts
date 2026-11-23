@@ -289,6 +289,8 @@ export interface GDrivePublicStatus {
   max_backups_per_instance: number;
   connected: boolean;
   connected_email?: string;
+  auth_mode?: string;
+  cli_available?: boolean;
 }
 
 export interface McLoaderStatus {
