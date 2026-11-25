@@ -1,12 +1,20 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { api, getToken, setToken } from './api/client';
-import { AppTemplate, HostSystemInfo, Instance, PanelSettings, UpdateStatus, User } from './types';
+import {
+  AppTemplate,
+  HostSystemInfo,
+  Instance,
+  PanelSettings,
+  SentinelStatus,
+  UpdateStatus,
+  User,
+} from './types';
 import { LoginView } from './components/LoginView';
 import { CreateInstanceModal } from './components/CreateInstanceModal';
 import { InstancesPage } from './pages/InstancesPage';
 import { InstanceDetailPage, InstanceTabId } from './pages/InstanceDetailPage';
 import { AnalyticsPage } from './pages/AnalyticsPage';
-import { AuditLogPage, SettingsPage, UsersPage, WebhooksPage } from './pages/OpsPages';
+import { AuditLogPage, SentinelPage, SettingsPage, UsersPage, WebhooksPage } from './pages/OpsPages';
 import { formatRamValue, useRamUnit } from './utils/ramUnit';
 import {
   Activity,
@@ -20,19 +28,22 @@ import {
   Globe,
   HardDrive,
   LogOut,
+  Menu,
   Package,
   Plus,
   RefreshCw,
   Search,
   Server,
   Settings,
+  ShieldCheck,
   Terminal,
   Users,
   Webhook,
+  X,
   Zap,
 } from 'lucide-react';
 
-type NavPage = 'instances' | 'analytics' | 'webhooks' | 'users' | 'audit' | 'settings';
+type NavPage = 'instances' | 'sentinel' | 'analytics' | 'webhooks' | 'users' | 'audit' | 'settings';
 
 export function App() {
   const [user, setUser] = useState<User | null>(null);
@@ -42,11 +53,13 @@ export function App() {
   const [instances, setInstances] = useState<Instance[]>([]);
   const [templates, setTemplates] = useState<AppTemplate[]>([]);
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null);
+  const [sentinelStatus, setSentinelStatus] = useState<SentinelStatus | null>(null);
 
   const [page, setPage] = useState<NavPage>('instances');
   const [selectedInstanceId, setSelectedInstanceId] = useState<string | null>(null);
   const [instanceTab, setInstanceTab] = useState<InstanceTabId>('status');
   const [showCreateModal, setShowCreateModal] = useState(false);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
 
   // AMP-style Global Quick Search & RAM Unit (MB <-> GB)
@@ -87,6 +100,7 @@ export function App() {
         setQuickOpen((v) => !v);
       } else if (e.key === 'Escape') {
         setQuickOpen(false);
+        setMobileMenuOpen(false);
       }
     };
     window.addEventListener('keydown', onKey);
@@ -96,14 +110,16 @@ export function App() {
   const refreshCore = async () => {
     if (!user) return;
     try {
-      const [insts, info, upd] = await Promise.all([
+      const [insts, info, upd, sent] = await Promise.all([
         api<Instance[]>('/api/instances'),
         api<HostSystemInfo>('/api/system/info'),
         api<UpdateStatus>('/api/updater/status'),
+        api<SentinelStatus>('/api/sentinel/status').catch(() => null),
       ]);
       setInstances(insts);
       setSysInfo(info);
       setUpdateStatus(upd);
+      if (sent) setSentinelStatus(sent);
     } catch {}
   };
 
@@ -125,6 +141,7 @@ export function App() {
     setInstanceTab(tab);
     setQuickOpen(false);
     setQuickQuery('');
+    setMobileMenuOpen(false);
   };
 
   if (!authChecked) {
@@ -137,11 +154,12 @@ export function App() {
 
   const navItems: { id: NavPage; label: string; icon: React.ElementType }[] = [
     { id: 'instances', label: 'Istanze', icon: Server },
+    { id: 'sentinel', label: 'Coolify Sentinel', icon: ShieldCheck },
     { id: 'analytics', label: 'Analytics & Geo', icon: BarChart3 },
     { id: 'webhooks', label: 'Webhook', icon: Webhook },
     { id: 'users', label: 'Utenti & Ruoli', icon: Users },
     { id: 'audit', label: 'Audit Log', icon: FileClock },
-    { id: 'settings', label: 'Impostazioni & Update', icon: Settings },
+    { id: 'settings', label: 'Impostazioni & OAuth', icon: Settings },
   ];
 
   // AMP-style Instance Sidebar Menu items
@@ -212,6 +230,7 @@ export function App() {
             setPage(n.id);
             setQuickOpen(false);
             setQuickQuery('');
+            setMobileMenuOpen(false);
           },
         });
       }
@@ -219,27 +238,57 @@ export function App() {
     return list.slice(0, 10);
   }, [quickQuery, instances]);
 
+  const sentinelDotColor =
+    sentinelStatus?.agent_state === 'critical'
+      ? 'var(--danger)'
+      : sentinelStatus?.agent_state === 'warning'
+      ? 'var(--warning)'
+      : sentinelStatus?.agent_state === 'paused'
+      ? 'var(--text-muted)'
+      : 'var(--success)';
+
   return (
     <div className="app-shell">
+      {/* Mobile Off-Canvas Backdrop */}
+      <div
+        className={`mobile-sidebar-backdrop ${mobileMenuOpen ? 'open' : ''}`}
+        onClick={() => setMobileMenuOpen(false)}
+      />
+
       {/* AMP-style Context-Switching Left Sidebar */}
-      <aside className="sidebar">
+      <aside className={`sidebar ${mobileMenuOpen ? 'open' : ''}`}>
         <div
           className="sidebar-brand"
-          style={{ cursor: 'pointer' }}
+          style={{ cursor: 'pointer', justifyContent: 'space-between' }}
           onClick={() => {
             setSelectedInstanceId(null);
             setPage('instances');
+            setMobileMenuOpen(false);
           }}
         >
-          <div className="brand-mark">
-            <Zap size={18} />
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0 }}>
+            <div className="brand-mark">
+              <Zap size={18} />
+            </div>
+            <div className="brand-info">
+              <span className="brand-name">{settings?.panel_name || 'GOLDSMP'}</span>
+              <span className="brand-sub">
+                v{updateStatus?.active_ui_version || sysInfo?.panel_version || '1.10.0'} • ADS Rust
+              </span>
+            </div>
           </div>
-          <div className="brand-info">
-            <span className="brand-name">{settings?.panel_name || 'GOLDSMP'}</span>
-            <span className="brand-sub">
-              v{updateStatus?.active_ui_version || sysInfo?.panel_version || '1.9.0'} • ADS Rust
-            </span>
-          </div>
+          <button
+            type="button"
+            className="mobile-menu-btn"
+            style={{ width: 30, height: 30 }}
+            onClick={(e) => {
+              e.stopPropagation();
+              setMobileMenuOpen(false);
+            }}
+            aria-label="Chiudi menu"
+          >
+            <X size={15} />
+          </button>
         </div>
 
         <nav className="sidebar-nav">
@@ -250,7 +299,10 @@ export function App() {
                 <button
                   type="button"
                   className="btn btn-secondary"
-                  onClick={() => setSelectedInstanceId(null)}
+                  onClick={() => {
+                    setSelectedInstanceId(null);
+                    setMobileMenuOpen(false);
+                  }}
                   style={{ width: '100%', justifyContent: 'flex-start', padding: '9px 12px' }}
                 >
                   <ArrowLeft size={15} />
@@ -272,7 +324,7 @@ export function App() {
                   style={{
                     fontWeight: 700,
                     fontSize: 13.5,
-                    color: '#fff4d2',
+                    color: '#fff6dc',
                     whiteSpace: 'nowrap',
                     overflow: 'hidden',
                     textOverflow: 'ellipsis',
@@ -307,7 +359,10 @@ export function App() {
                   <button
                     key={item.id}
                     className={`nav-item ${active ? 'active' : ''}`}
-                    onClick={() => setInstanceTab(item.id)}
+                    onClick={() => {
+                      setInstanceTab(item.id);
+                      setMobileMenuOpen(false);
+                    }}
                   >
                     <Icon size={16} />
                     <span>{item.label}</span>
@@ -319,15 +374,17 @@ export function App() {
             <>
               <div style={{ padding: '2px 4px 10px' }}>
                 <button
+                  id="btn-sidebar-create-instance"
                   type="button"
                   className="btn btn-primary"
-                  onClick={() => setShowCreateModal(true)}
+                  onClick={() => {
+                    setShowCreateModal(true);
+                    setMobileMenuOpen(false);
+                  }}
                   style={{
                     width: '100%',
                     padding: '10px 12px',
                     fontSize: 13.5,
-                    boxShadow: '0 0 18px rgba(245, 185, 50, 0.35)',
-                    border: '1px solid rgba(255, 240, 179, 0.55)',
                   }}
                 >
                   <Plus size={16} strokeWidth={2.5} />
@@ -335,31 +392,49 @@ export function App() {
                 </button>
               </div>
 
-              <div className="nav-section-label">Gestione ADS</div>
-              {navItems.slice(0, 3).map((item) => {
+              <div className="nav-section-label">Gestione & Sentinel</div>
+              {navItems.slice(0, 4).map((item) => {
                 const Icon = item.icon;
                 const active = page === item.id;
                 return (
                   <button
+                    id={`nav-item-${item.id}`}
                     key={item.id}
                     className={`nav-item ${active ? 'active' : ''}`}
-                    onClick={() => setPage(item.id)}
+                    onClick={() => {
+                      setPage(item.id);
+                      setMobileMenuOpen(false);
+                    }}
                   >
                     <Icon size={17} />
-                    <span>{item.label}</span>
+                    <span style={{ flex: 1 }}>{item.label}</span>
+                    {item.id === 'sentinel' && (
+                      <span
+                        style={{
+                          width: 7,
+                          height: 7,
+                          borderRadius: '50%',
+                          background: sentinelDotColor,
+                        }}
+                      />
+                    )}
                   </button>
                 );
               })}
 
               <div className="nav-section-label">Amministrazione</div>
-              {navItems.slice(3).map((item) => {
+              {navItems.slice(4).map((item) => {
                 const Icon = item.icon;
                 const active = page === item.id;
                 return (
                   <button
+                    id={`nav-item-${item.id}`}
                     key={item.id}
                     className={`nav-item ${active ? 'active' : ''}`}
-                    onClick={() => setPage(item.id)}
+                    onClick={() => {
+                      setPage(item.id);
+                      setMobileMenuOpen(false);
+                    }}
                   >
                     <Icon size={17} />
                     <span>{item.label}</span>
@@ -372,6 +447,7 @@ export function App() {
 
         <div className="sidebar-footer">
           <span
+            id="btn-sidebar-ram-unit"
             className="ram-pill"
             onClick={toggleRamUnit}
             style={{ cursor: 'pointer' }}
@@ -381,7 +457,7 @@ export function App() {
               ? `${formatRamValue(sysInfo.panel_memory_mb, ramUnit, ramUnit === 'GB' ? 3 : 1)} RAM`
               : 'Rust Engine'}
           </span>
-          <button className="btn btn-secondary btn-sm" onClick={logout} title="Esci">
+          <button id="btn-logout" className="btn btn-secondary btn-sm" onClick={logout} title="Esci">
             <LogOut size={14} />
           </button>
         </div>
@@ -390,7 +466,17 @@ export function App() {
       {/* Main Column */}
       <div className="main-column">
         <header className="topbar">
-          <div className="topbar-left" style={{ gap: 14 }}>
+          <div className="topbar-left">
+            <button
+              id="btn-mobile-menu-toggle"
+              type="button"
+              className="mobile-menu-btn"
+              onClick={() => setMobileMenuOpen((v) => !v)}
+              aria-label="Apri menu"
+            >
+              <Menu size={18} />
+            </button>
+
             <span className="topbar-title">
               {selectedInstance
                 ? `${selectedInstance.name}`
@@ -400,6 +486,7 @@ export function App() {
             {/* AMP-style Quick Search / Jump bar */}
             <div style={{ position: 'relative' }}>
               <button
+                id="btn-quick-search-toggle"
                 type="button"
                 className="btn btn-secondary btn-sm"
                 onClick={() => setQuickOpen((v) => !v)}
@@ -408,12 +495,13 @@ export function App() {
                   color: 'var(--text-secondary)',
                   fontFamily: 'var(--font-mono)',
                   fontSize: 12,
-                  padding: '5px 12px',
+                  padding: '5px 10px',
                 }}
               >
                 <Search size={13} />
-                <span>Cerca istanza o menu...</span>
+                <span className="quick-search-text">Cerca...</span>
                 <span
+                  className="quick-search-kbd"
                   style={{
                     fontSize: 10,
                     padding: '1px 5px',
@@ -433,16 +521,17 @@ export function App() {
                     position: 'absolute',
                     top: '115%',
                     left: 0,
-                    width: 340,
+                    width: 'min(340px, 86vw)',
                     padding: 10,
                     zIndex: 80,
                     border: '1px solid var(--border-strong)',
                   }}
                 >
                   <input
+                    id="input-quick-search"
                     autoFocus
                     style={{ width: '100%', marginBottom: 8 }}
-                    placeholder="Digita istanza, console, ftp, analytics..."
+                    placeholder="Digita istanza, sentinel, console, ftp..."
                     value={quickQuery}
                     onChange={(e) => setQuickQuery(e.target.value)}
                   />
@@ -455,7 +544,7 @@ export function App() {
                         style={{ flexDirection: 'column', alignItems: 'flex-start', gap: 1, padding: '7px 10px' }}
                         onClick={r.action}
                       >
-                        <span style={{ fontSize: 13, fontWeight: 600, color: '#fff4d2' }}>{r.label}</span>
+                        <span style={{ fontSize: 13, fontWeight: 600, color: '#fff6dc' }}>{r.label}</span>
                         <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>{r.sub}</span>
                       </button>
                     ))}
@@ -466,22 +555,51 @@ export function App() {
           </div>
 
           <div className="topbar-right">
+            {/* Coolify Sentinel Live Status Pill */}
             <button
+              id="btn-topbar-sentinel"
+              type="button"
+              className="sentinel-pill"
+              onClick={() => {
+                setSelectedInstanceId(null);
+                setPage('sentinel');
+              }}
+              title="Coolify Sentinel Watchdog & Health Checks"
+            >
+              <span
+                style={{
+                  width: 7,
+                  height: 7,
+                  borderRadius: '50%',
+                  background: sentinelDotColor,
+                }}
+              />
+              <span>Sentinel</span>
+              {sentinelStatus && sentinelStatus.total_auto_heals > 0 && (
+                <span style={{ color: 'var(--accent-hover)' }}>
+                  ({sentinelStatus.total_auto_heals} heal)
+                </span>
+              )}
+            </button>
+
+            <button
+              id="btn-topbar-create-instance"
               type="button"
               className="btn btn-primary btn-sm"
               onClick={() => setShowCreateModal(true)}
               style={{
-                padding: '6px 14px',
-                boxShadow: '0 0 14px rgba(245, 185, 50, 0.35)',
+                padding: '6px 12px',
               }}
             >
-              <Plus size={14} strokeWidth={2.5} /> Nuova Istanza
+              <Plus size={14} strokeWidth={2.5} />
+              <span className="quick-search-text">Nuova Istanza</span>
             </button>
+
             <div className="pill-group" title="Switch unità visualizzazione e input RAM (MB / GB)">
               <button
                 type="button"
                 className={`pill-btn ${ramUnit === 'MB' ? 'active' : ''}`}
-                style={{ padding: '4px 9px', fontSize: 11.5 }}
+                style={{ padding: '4px 8px', fontSize: 11 }}
                 onClick={() => setRamUnit('MB')}
               >
                 MB
@@ -489,7 +607,7 @@ export function App() {
               <button
                 type="button"
                 className={`pill-btn ${ramUnit === 'GB' ? 'active' : ''}`}
-                style={{ padding: '4px 9px', fontSize: 11.5 }}
+                style={{ padding: '4px 8px', fontSize: 11 }}
                 onClick={() => setRamUnit('GB')}
               >
                 GB
@@ -527,7 +645,7 @@ export function App() {
             >
               <Bell size={14} color={showRefreshBanner ? 'var(--accent)' : undefined} />
             </button>
-            <span style={{ fontSize: 13, color: 'var(--text-secondary)', fontWeight: 500 }}>
+            <span className="topbar-username" style={{ fontSize: 13, color: 'var(--text-secondary)', fontWeight: 500 }}>
               {user.username}
             </span>
           </div>
@@ -538,7 +656,7 @@ export function App() {
             style={{
               background: 'var(--accent-soft)',
               borderBottom: '1px solid var(--accent)',
-              padding: '10px 24px',
+              padding: '10px 20px',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'space-between',
@@ -576,9 +694,16 @@ export function App() {
             <InstancesPage
               instances={instances}
               sysInfo={sysInfo}
+              sentinel={sentinelStatus}
               onRefresh={refreshCore}
               onSelectInstance={(id, tab) => openInstance(id, tab)}
               onOpenCreate={() => setShowCreateModal(true)}
+              onOpenSentinel={() => setPage('sentinel')}
+              onNotify={notify}
+            />
+          ) : page === 'sentinel' ? (
+            <SentinelPage
+              onSelectInstance={(id) => openInstance(id, 'status')}
               onNotify={notify}
             />
           ) : page === 'analytics' ? (
@@ -622,3 +747,4 @@ export function App() {
 }
 
 export default App;
+

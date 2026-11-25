@@ -108,17 +108,17 @@ export const CreateInstanceModal: React.FC<CreateInstanceModalProps> = ({
           maxWidth: 1060,
           width: '96%',
           maxHeight: '92vh',
-          border: '1px solid rgba(245, 185, 50, 0.5)',
-          boxShadow: '0 28px 90px rgba(0, 0, 0, 0.82), 0 0 42px rgba(245, 185, 50, 0.16)',
+          border: '1px solid var(--border-strong)',
+          boxShadow: 'var(--shadow-elevated)',
         }}
         onClick={(e) => e.stopPropagation()}
       >
-        {/* High-Visibility Iron Man Gold Header */}
+        {/* High-Visibility Header */}
         <div
           className="modal-header"
           style={{
             background:
-              'linear-gradient(90deg, rgba(245, 185, 50, 0.16) 0%, rgba(185, 28, 28, 0.1) 60%, transparent 100%)',
+              'linear-gradient(90deg, rgba(245, 185, 50, 0.1) 0%, transparent 80%)',
             padding: '18px 24px',
           }}
         >
@@ -132,9 +132,9 @@ export const CreateInstanceModal: React.FC<CreateInstanceModalProps> = ({
                   fontFamily: 'var(--font-display)',
                   fontSize: 22,
                   fontWeight: 700,
-                  letterSpacing: '0.05em',
+                  letterSpacing: '0.04em',
                   textTransform: 'uppercase',
-                  color: '#fff4d2',
+                  color: '#fff6dc',
                 }}
               >
                 Dispiega Nuova Istanza Server
@@ -144,12 +144,12 @@ export const CreateInstanceModal: React.FC<CreateInstanceModalProps> = ({
               </p>
             </div>
           </div>
-          <button className="btn btn-secondary btn-sm" onClick={onClose}>
+          <button id="btn-close-create-modal" className="btn btn-secondary btn-sm" onClick={onClose}>
             <X size={16} />
           </button>
         </div>
 
-        <form onSubmit={handleCreate} style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
+        <form id="form-create-instance" onSubmit={handleCreate} style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
           <div className="modal-body" style={{ padding: '20px 24px', gap: 18 }}>
             {/* Category Filter Bar */}
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
@@ -163,6 +163,7 @@ export const CreateInstanceModal: React.FC<CreateInstanceModalProps> = ({
                   { id: 'generic', label: 'Node.js / Python / Custom' },
                 ].map((c) => (
                   <button
+                    id={`btn-modal-cat-${c.id}`}
                     type="button"
                     key={c.id}
                     className={`btn btn-sm ${catFilter === c.id ? 'btn-primary' : 'btn-secondary'}`}
@@ -193,6 +194,7 @@ export const CreateInstanceModal: React.FC<CreateInstanceModalProps> = ({
                 const art = getGameArt(tpl.id, tpl.category);
                 return (
                   <button
+                    id={`btn-pick-tpl-${tpl.id}`}
                     type="button"
                     key={tpl.id}
                     onClick={() => pickTemplate(tpl)}
@@ -203,12 +205,12 @@ export const CreateInstanceModal: React.FC<CreateInstanceModalProps> = ({
                       padding: '14px 16px',
                       borderRadius: 'var(--radius-md)',
                       background: active
-                        ? 'linear-gradient(135deg, rgba(245, 185, 50, 0.22), rgba(20, 20, 28, 0.95))'
-                        : 'linear-gradient(135deg, hsl(240, 13%, 12%), hsl(240, 14%, 8.5%))',
+                        ? 'linear-gradient(145deg, rgba(245, 185, 50, 0.16), hsl(240, 12%, 12.5%))'
+                        : 'linear-gradient(145deg, hsl(240, 12%, 11.8%), hsl(240, 14%, 8.8%))',
                       border: active
-                        ? `2px solid ${art.accent}`
+                        ? '1px solid var(--border-focus)'
                         : '1px solid var(--border-subtle)',
-                      boxShadow: active ? `0 0 22px rgba(245, 185, 50, 0.22)` : 'none',
+                      boxShadow: active ? 'var(--shadow-elevated)' : 'var(--shadow-card)',
                       display: 'flex',
                       flexDirection: 'column',
                       gap: 6,
@@ -225,13 +227,13 @@ export const CreateInstanceModal: React.FC<CreateInstanceModalProps> = ({
                         backgroundRepeat: 'no-repeat',
                         backgroundPosition: 'right -10px center',
                         backgroundSize: '230px auto',
-                        opacity: active ? 0.95 : 0.65,
+                        opacity: active ? 0.9 : 0.6,
                         pointerEvents: 'none',
                       }}
                     />
 
                     <div style={{ position: 'relative', zIndex: 1, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontWeight: 700, fontSize: 14, color: '#fff4d2' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontWeight: 700, fontSize: 14, color: '#fff6dc' }}>
                         {tpl.category === 'horizon' && <Zap size={16} color={art.accent} />}
                         {tpl.category === 'minecraft' && <Boxes size={16} color={art.accent} />}
                         {tpl.category === 'steamcmd' && <Gamepad2 size={16} color={art.accent} />}
@@ -245,7 +247,7 @@ export const CreateInstanceModal: React.FC<CreateInstanceModalProps> = ({
                           padding: '2px 7px',
                           borderRadius: 99,
                           background: 'rgba(0,0,0,0.45)',
-                          border: `1px solid ${art.accent}55`,
+                          border: '1px solid var(--border-subtle)',
                           color: art.accent,
                           fontWeight: 600,
                         }}
@@ -285,7 +287,6 @@ export const CreateInstanceModal: React.FC<CreateInstanceModalProps> = ({
                   position: 'relative',
                   overflow: 'hidden',
                   padding: 18,
-                  border: `1px solid ${selectedArt.accent}55`,
                 }}
               >
                 <div

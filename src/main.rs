@@ -13,6 +13,7 @@ mod modrinth;
 mod process_manager;
 mod scheduler;
 mod security;
+mod sentinel;
 mod state;
 mod templates;
 mod updater;
@@ -21,6 +22,7 @@ mod webhooks;
 use crate::db::Database;
 use crate::process_manager::ProcessManager;
 use crate::security::SecurityGuard;
+use crate::sentinel::SentinelMonitor;
 use crate::state::AppState;
 use crate::updater::AutoUpdater;
 use chrono::Utc;
@@ -62,6 +64,7 @@ async fn main() {
 
     let pm = Arc::new(ProcessManager::new(db.clone(), data_dir.clone(), http.clone()));
     let updater = Arc::new(AutoUpdater::new(db.clone(), data_dir.clone(), http.clone()));
+    let sentinel = Arc::new(SentinelMonitor::new(db.clone(), pm.clone(), http.clone()));
 
     seed_demo_instance_if_empty(&db, &data_dir);
 
@@ -70,16 +73,18 @@ async fn main() {
         .and_then(|p| p.parse().ok())
         .unwrap_or(2121);
 
-    // Start background telemetry collector (5s resolution), task scheduler, zero-downtime auto-updater, and native FTP server
+    // Start background telemetry collector (5s resolution), task scheduler, zero-downtime auto-updater, Coolify Sentinel watchdog, and native FTP server
     analytics::spawn_telemetry_collector(db.clone(), pm.clone());
     scheduler::spawn_scheduler(db.clone(), pm.clone(), data_dir.clone(), http.clone());
     updater.spawn_background_loop();
+    sentinel.spawn_background_loop();
     ftp_server::spawn_ftp_server(db.clone(), pm.clone(), ftp_port);
 
     let state = AppState {
         db,
         pm,
         updater,
+        sentinel,
         security: SecurityGuard::new(),
         data_dir,
         jwt_secret,

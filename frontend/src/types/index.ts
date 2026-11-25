@@ -302,7 +302,55 @@ export interface McLoaderStatus {
   active_version: string;
 }
 
+export interface SentinelConfig {
+  enabled: boolean;
+  check_interval_secs: number;
+  auto_heal_crashed: boolean;
+  auto_heal_unresponsive_port: boolean;
+  cpu_warn_threshold: number;
+  mem_warn_threshold: number;
+  disk_warn_threshold: number;
+  push_endpoint: string;
+  push_token: string;
+  push_interval_secs: number;
+}
 
+export interface SentinelInstanceHealth {
+  instance_id: string;
+  instance_name: string;
+  template_id: string;
+  port: number;
+  process_status: string;
+  health_state: 'healthy' | 'starting' | 'unhealthy' | 'degraded' | 'stopped' | 'healing';
+  port_reachable: boolean;
+  latency_ms?: number;
+  cpu_percent: number;
+  memory_mb: number;
+  max_memory_mb: number;
+  memory_usage_pct: number;
+  consecutive_failures: number;
+  auto_heals_count: number;
+  last_checked: string;
+}
 
+export interface SentinelEvent {
+  timestamp: string;
+  level: 'info' | 'warn' | 'critical' | 'heal';
+  target: string;
+  message: string;
+}
 
-
+export interface SentinelStatus {
+  config: SentinelConfig;
+  agent_state: 'active' | 'paused' | 'warning' | 'critical';
+  last_heartbeat?: string;
+  total_checks: number;
+  total_auto_heals: number;
+  active_warnings: string[];
+  host_cpu_pct: number;
+  host_mem_pct: number;
+  host_disk_pct: number;
+  instances: SentinelInstanceHealth[];
+  recent_events: SentinelEvent[];
+  last_push_status?: string;
+}

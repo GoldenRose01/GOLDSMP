@@ -161,6 +161,7 @@ pub fn build_router(state: AppState) -> Router {
         // Google Drive Cloud Backup & Direct OAuth2 Login Portal
         .route("/api/gdrive/status", get(ops_routes::gdrive_status))
         .route("/api/gdrive/config", put(ops_routes::gdrive_update_config))
+        .route("/api/gdrive/import-json", post(ops_routes::gdrive_import_client_json))
         .route("/api/gdrive/auth-url", get(ops_routes::gdrive_auth_url))
         .route("/api/gdrive/login", get(ops_routes::gdrive_direct_login_page))
         .route("/api/gdrive/quick-connect", get(ops_routes::gdrive_quick_connect))
@@ -207,6 +208,10 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/updater/apply", post(ops_routes::updater_apply))
         .route("/api/updater/config", put(ops_routes::updater_config))
         .route("/api/updater/restart", post(ops_routes::updater_restart))
+        // Coolify Sentinel Watchdog & Health Agent
+        .route("/api/sentinel/status", get(ops_routes::sentinel_status))
+        .route("/api/sentinel/check", post(ops_routes::sentinel_check_now))
+        .route("/api/sentinel/config", put(ops_routes::sentinel_update_config))
         // Embedded SPA Frontend (with zero-downtime hot-swap override)
         .fallback(static_handler)
         .layer(axum::extract::DefaultBodyLimit::max(10 * 1024 * 1024))

@@ -692,13 +692,14 @@ export const InstanceDetailPage: React.FC<InstanceDetailPageProps> = ({
                     }}
                     style={{
                       fontFamily: 'var(--font-mono)',
-                      fontSize: 16,
+                      fontSize: 'clamp(13.5px, 2vw, 16px)',
                       fontWeight: 700,
-                      color: '#fff4d2',
+                      color: '#fff6dc',
                       background: 'rgba(0, 0, 0, 0.45)',
                       border: '1px solid var(--border-strong)',
                       padding: '8px 14px',
-                      width: 290,
+                      width: 'min(290px, 100%)',
+                      flex: '1 1 200px',
                       cursor: 'pointer',
                     }}
                   />
@@ -848,7 +849,7 @@ export const InstanceDetailPage: React.FC<InstanceDetailPageProps> = ({
             )}
           </div>
 
-          <div className="grid-4">
+          <div className="grid-4 gauges-grid">
             <Gauge
               label="Utilizzo CPU"
               value={inst.cpu_percent}
@@ -2821,8 +2822,43 @@ export const InstanceDetailPage: React.FC<InstanceDetailPageProps> = ({
                 </span>
               </div>
 
-              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+                <label
+                  htmlFor="input-import-oauth-json-instance"
+                  className="btn btn-secondary btn-sm"
+                  style={{ cursor: 'pointer' }}
+                  title="Importa il file client_secret.json / oauth_client.json di Google Cloud e salvalo nelle condizioni di installazione"
+                >
+                  Importa client_secret.json
+                </label>
+                <input
+                  id="input-import-oauth-json-instance"
+                  type="file"
+                  accept=".json,application/json"
+                  style={{ display: 'none' }}
+                  onChange={async (e) => {
+                    const f = e.target.files?.[0];
+                    if (!f) return;
+                    try {
+                      const raw = await f.text();
+                      const updated = await api<GDrivePublicStatus>('/api/gdrive/import-json', {
+                        method: 'POST',
+                        body: JSON.stringify({
+                          raw_json: raw,
+                          persist_install_file: true,
+                        }),
+                      });
+                      setGdrive(updated);
+                      setGdClientId(updated.client_id || '');
+                      setGdRedirectUri(updated.redirect_uri || gdRedirectUri);
+                      onNotify('Client OAuth importato e salvato nelle condizioni di installazione!');
+                    } catch (err: any) {
+                      onNotify(`Errore importazione JSON OAuth: ${err.message}`);
+                    }
+                  }}
+                />
                 <button
+                  id="btn-save-gdrive-config"
                   type="button"
                   className="btn btn-secondary btn-sm"
                   onClick={async () => {
@@ -2850,11 +2886,9 @@ export const InstanceDetailPage: React.FC<InstanceDetailPageProps> = ({
                 </button>
 
                 <button
+                  id="btn-open-gdrive-direct-login"
                   type="button"
                   className="btn btn-primary btn-sm"
-                  style={{
-                    boxShadow: '0 0 16px rgba(245, 185, 50, 0.35)',
-                  }}
                   onClick={async () => {
                     try {
                       await api('/api/gdrive/config', {

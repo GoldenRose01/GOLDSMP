@@ -37,20 +37,32 @@
 ## Avvio Rapido
 
 ```bash
-# 1. Compila il frontend React (verrà incorporato nel binario Rust)
-cd frontend && npm install && npm run build && cd ..
+# 1. Compila il frontend React e il binario singolo ottimizzato (con eventuale Client OAuth preconfigurato)
+./build.sh --oauth-client-file ./oauth_client.json
+# oppure:
+# ./build.sh --oauth-client-id "xxxx.apps.googleusercontent.com" --oauth-client-secret "GOCSPX-..."
 
-# 2. Compila il binario singolo ottimizzato
-cargo build --release
-
-# 3. Avvia GOLDSMP
+# 2. Avvia GOLDSMP
 ./target/release/goldsmp
 ```
 
 Apri `http://localhost:8080` — Credenziali predefinite: **`admin` / `admin123`**.
 
-### Variabili d'Ambiente
+### Condizioni di Installazione & Client OAuth (Google Drive / OIDC)
+
+Puoi preconfigurare il **Client OAuth** direttamente in fase di installazione in tre modi:
+1. **File JSON Google Cloud (`oauth_client.json`)**: copia il file JSON scaricato da Google Cloud Console in `./goldsmp-data/oauth_client.json` (o `./oauth_client.json` / `/etc/goldsmp/oauth_client.json`, oppure passalo a `./build.sh --oauth-client-file /percorso/client_secret.json`).
+2. **Variabili d'Ambiente / Systemd (`goldsmp.service`)**:
+   - `GOLDSMP_OAUTH_CLIENT_ID` / `GOOGLE_OAUTH_CLIENT_ID`
+   - `GOLDSMP_OAUTH_CLIENT_SECRET` / `GOOGLE_OAUTH_CLIENT_SECRET`
+   - `GOLDSMP_OAUTH_REDIRECT_URI` (default `http://localhost:8080/api/gdrive/callback`)
+   - `GOLDSMP_OAUTH_CLIENT_FILE` (percorso a `oauth_client.json`)
+   - `GOLDSMP_OIDC_ISSUER_URL`, `GOLDSMP_OIDC_CLIENT_ID`, `GOLDSMP_OIDC_CLIENT_SECRET`
+3. **Interfaccia Web & Portale OAuth (`/api/gdrive/login`)**: importa il file `client_secret.json` con 1 click dalle Impostazioni o dalla scheda Backup, oppure usa la sessione CLI pre-autenticata.
+
+### Variabili d'Ambiente Principali
 
 - `GOLDSMP_PORT` (default `8080`)
 - `GOLDSMP_DATA_DIR` (default `./goldsmp-data`)
 - `GOLDSMP_JWT_SECRET` (imposta una chiave sicura in produzione)
+

@@ -23,19 +23,49 @@ pub struct GDriveConfig {
 
 impl Default for GDriveConfig {
     fn default() -> Self {
+        let port = std::env::var("GOLDSMP_PORT").unwrap_or_else(|_| "8080".into());
+        let default_redirect = std::env::var("GOLDSMP_OAUTH_REDIRECT_URI")
+            .or_else(|_| std::env::var("GOOGLE_OAUTH_REDIRECT_URI"))
+            .unwrap_or_else(|_| format!("http://localhost:{}/api/gdrive/callback", port));
+
+        let client_id = std::env::var("GOLDSMP_OAUTH_CLIENT_ID")
+            .or_else(|_| std::env::var("GOOGLE_OAUTH_CLIENT_ID"))
+            .unwrap_or_default();
+        let client_secret = std::env::var("GOLDSMP_OAUTH_CLIENT_SECRET")
+            .or_else(|_| std::env::var("GOOGLE_OAUTH_CLIENT_SECRET"))
+            .unwrap_or_default();
+        let server_folder_name = std::env::var("GOLDSMP_GDRIVE_FOLDER")
+            .ok()
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or_else(|| "GOLDSMP-Server".into());
+        let max_backups_per_instance = std::env::var("GOLDSMP_GDRIVE_MAX_BACKUPS")
+            .ok()
+            .and_then(|v| v.parse::<usize>().ok())
+            .filter(|&n| n >= 1)
+            .unwrap_or(5);
+
+        let cli_auth = is_gdrive_cli_authenticated();
         Self {
             enabled: true,
-            client_id: String::new(),
-            client_secret: String::new(),
-            redirect_uri: "http://localhost:8080/api/gdrive/callback".into(),
-            server_folder_name: "GOLDSMP-Server".into(),
-            max_backups_per_instance: 5,
-            connected: false,
-            connected_email: None,
+            client_id,
+            client_secret,
+            redirect_uri: default_redirect,
+            server_folder_name,
+            max_backups_per_instance,
+            connected: cli_auth,
+            connected_email: if cli_auth {
+                Some(detect_gdrive_cli_email())
+            } else {
+                None
+            },
             access_token: String::new(),
             refresh_token: String::new(),
             token_expires_at: 0,
-            auth_mode: String::new(),
+            auth_mode: if cli_auth {
+                "gdrive_cli".into()
+            } else {
+                String::new()
+            },
         }
     }
 }
@@ -83,16 +113,134 @@ pub fn is_gdrive_cli_authenticated() -> bool {
         .unwrap_or(false)
 }
 
+pub fn detect_gdrive_cli_email() -> String {
+    std::process::Command::new("gdrive")
+        .args(["auth", "status", "--json"])
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .and_then(|o| serde_json::from_slice::<serde_json::Value>(&o.stdout).ok())
+        .and_then(|j| {
+            j.get("email")
+                .and_then(|s| s.as_str())
+                .filter(|s| !s.is_empty())
+                .map(|s| s.to_string())
+        })
+        .unwrap_or_else(|| "Google Drive (Sessione Installazione 1-Click)".into())
+}
+
+/// Applies install-time OAuth client provisioning from environment variables or `oauth_client.json`
+/// (`web` / `installed` Google Cloud credentials format or direct GOLDSMP format).
+fn apply_install_time_oauth_defaults(cfg: &mut GDriveConfig) -> bool {
+    let mut changed = false;
+
+    if cfg.client_id.trim().is_empty() {
+        if let Ok(env_id) = std::env::var("GOLDSMP_OAUTH_CLIENT_ID")
+            .or_else(|_| std::env::var("GOOGLE_OAUTH_CLIENT_ID"))
+        {
+            if !env_id.trim().is_empty() {
+                cfg.client_id = env_id.trim().to_string();
+                changed = true;
+            }
+        }
+    }
+    if cfg.client_secret.trim().is_empty() {
+        if let Ok(env_sec) = std::env::var("GOLDSMP_OAUTH_CLIENT_SECRET")
+            .or_else(|_| std::env::var("GOOGLE_OAUTH_CLIENT_SECRET"))
+        {
+            if !env_sec.trim().is_empty() {
+                cfg.client_secret = env_sec.trim().to_string();
+                changed = true;
+            }
+        }
+    }
+    if let Ok(env_red) = std::env::var("GOLDSMP_OAUTH_REDIRECT_URI")
+        .or_else(|_| std::env::var("GOOGLE_OAUTH_REDIRECT_URI"))
+    {
+        if !env_red.trim().is_empty() && cfg.redirect_uri != env_red.trim() {
+            cfg.redirect_uri = env_red.trim().to_string();
+            changed = true;
+        }
+    }
+
+    // Check install-time oauth_client.json in data_dir or current directory
+    let data_dir = std::env::var("GOLDSMP_DATA_DIR").unwrap_or_else(|_| "./goldsmp-data".into());
+    let candidate_paths = [
+        std::env::var("GOLDSMP_OAUTH_CLIENT_FILE").unwrap_or_default(),
+        format!("{}/oauth_client.json", data_dir),
+        "./oauth_client.json".to_string(),
+        "/etc/goldsmp/oauth_client.json".to_string(),
+    ];
+    for p in candidate_paths.iter().filter(|s| !s.is_empty()) {
+        if let Ok(raw) = std::fs::read_to_string(p) {
+            if let Ok(val) = serde_json::from_str::<serde_json::Value>(&raw) {
+                let node = val
+                    .get("web")
+                    .or_else(|| val.get("installed"))
+                    .unwrap_or(&val);
+                if cfg.client_id.trim().is_empty() {
+                    if let Some(cid) = node.get("client_id").and_then(|v| v.as_str()) {
+                        if !cid.trim().is_empty() {
+                            cfg.client_id = cid.trim().to_string();
+                            changed = true;
+                        }
+                    }
+                }
+                if cfg.client_secret.trim().is_empty() {
+                    if let Some(csec) = node.get("client_secret").and_then(|v| v.as_str()) {
+                        if !csec.trim().is_empty() {
+                            cfg.client_secret = csec.trim().to_string();
+                            changed = true;
+                        }
+                    }
+                }
+                if let Some(r_arr) = node.get("redirect_uris").and_then(|v| v.as_array()) {
+                    if let Some(first_r) = r_arr.first().and_then(|v| v.as_str()) {
+                        if !first_r.trim().is_empty() && cfg.redirect_uri.contains("localhost:8080") {
+                            cfg.redirect_uri = first_r.trim().to_string();
+                            changed = true;
+                        }
+                    }
+                } else if let Some(r_str) = node.get("redirect_uri").and_then(|v| v.as_str()) {
+                    if !r_str.trim().is_empty() && cfg.redirect_uri.contains("localhost:8080") {
+                        cfg.redirect_uri = r_str.trim().to_string();
+                        changed = true;
+                    }
+                }
+                break;
+            }
+        }
+    }
+
+    // If neither OAuth token nor CLI session was connected yet, auto-connect if gdrive CLI is ready
+    if !cfg.connected && cfg.auth_mode.is_empty() && is_gdrive_cli_authenticated() {
+        cfg.connected = true;
+        cfg.auth_mode = "gdrive_cli".into();
+        cfg.connected_email = Some(detect_gdrive_cli_email());
+        changed = true;
+    }
+
+    changed
+}
+
 pub fn load_config(db: &Database) -> GDriveConfig {
-    let conn = db.conn();
-    conn.query_row(
-        "SELECT value FROM kv_settings WHERE key = 'gdrive_config'",
-        [],
-        |r| r.get::<_, String>(0),
-    )
-    .ok()
-    .and_then(|s| serde_json::from_str(&s).ok())
-    .unwrap_or_default()
+    let existing: Option<GDriveConfig> = {
+        let conn = db.conn();
+        conn.query_row(
+            "SELECT value FROM kv_settings WHERE key = 'gdrive_config'",
+            [],
+            |r| r.get::<_, String>(0),
+        )
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+    };
+
+    let mut cfg = existing.clone().unwrap_or_default();
+    let changed = apply_install_time_oauth_defaults(&mut cfg);
+    if existing.is_none() || changed {
+        let _ = save_config(db, &cfg);
+    }
+    cfg
 }
 
 pub fn save_config(db: &Database, cfg: &GDriveConfig) -> Result<(), String> {
@@ -106,11 +254,13 @@ pub fn save_config(db: &Database, cfg: &GDriveConfig) -> Result<(), String> {
 }
 
 /// Renders an interactive Direct Login / Account Chooser HTML page (`/api/gdrive/login`)
-/// that either redirects immediately to Google's official OAuth2 Account Chooser if Client ID is present,
-/// or displays a self-contained Google Login Options portal with 1-Click Local Account detection,
-/// OAuth2 Redirect Login, and Direct Google Token / OAuth Playground login.
-pub fn build_direct_login_portal_html(cfg: &GDriveConfig) -> String {
-    if !cfg.client_id.trim().is_empty() {
+/// that either redirects immediately to Google's official OAuth2 Account Chooser if Client ID is present
+/// (unless `?portal=1` is passed), or displays a self-contained Google Login Options portal with:
+/// - 1-Click Local Account detection
+/// - Install-time / Google Cloud `oauth_client.json` Direct Import & OAuth2 Redirect Login
+/// - Direct Google Token / OAuth Playground login.
+pub fn build_direct_login_portal_html(cfg: &GDriveConfig, force_portal: bool) -> String {
+    if !force_portal && !cfg.client_id.trim().is_empty() {
         if let Ok(oauth_url) = build_oauth_url(cfg) {
             return format!(
                 r#"<!DOCTYPE html>
@@ -120,16 +270,17 @@ pub fn build_direct_login_portal_html(cfg: &GDriveConfig) -> String {
   <title>Reindirizzamento al Login Google Drive — GOLDSMP</title>
   <meta http-equiv="refresh" content="0;url={oauth_url}" />
   <style>
-    body {{ background:#0b0b10; color:#fff4d2; font-family:system-ui,sans-serif; display:flex; align-items:center; justify-content:center; height:100vh; margin:0; }}
-    .box {{ text-align:center; padding:32px; border:1px solid rgba(245,185,50,0.45); border-radius:14px; background:#14141d; max-width:480px; }}
-    a {{ color:#f5b932; }}
+    body {{ background:#09090d; color:#f7f1de; font-family:'Inter',system-ui,sans-serif; display:flex; align-items:center; justify-content:center; height:100vh; margin:0; }}
+    .box {{ text-align:center; padding:32px; border:1px solid rgba(245,185,50,0.35); border-radius:14px; background:#12121a; max-width:480px; box-shadow:0 24px 60px rgba(0,0,0,0.7); }}
+    a {{ color:#f5b932; text-decoration:none; font-weight:600; }}
   </style>
 </head>
 <body>
   <div class="box">
     <h2 style="color:#f5b932;margin-top:0">Apertura Login Google Drive...</h2>
-    <p>Verrai reindirizzato automaticamente alla pagina di scelta account di Google.</p>
-    <p><a href="{oauth_url}">Clicca qui se non vieni reindirizzato</a></p>
+    <p style="color:#a1a1aa;font-size:14px;line-height:1.5">Client OAuth rilevato dalle condizioni di installazione. Verrai reindirizzato alla scelta account di Google.</p>
+    <p><a href="{oauth_url}">Continua su Google &rarr;</a></p>
+    <p style="margin-top:16px;font-size:12px"><a href="/api/gdrive/login?portal=1" style="color:#71717a">Apri invece il Portale Opzioni OAuth / Installazione</a></p>
   </div>
   <script>window.location.replace({oauth_url_js});</script>
 </body>
@@ -142,9 +293,11 @@ pub fn build_direct_login_portal_html(cfg: &GDriveConfig) -> String {
 
     let cli_ok = is_gdrive_cli_authenticated();
     let cli_badge = if cli_ok {
-        r#"<span style="background:rgba(16,185,129,0.2);color:#34d399;padding:3px 9px;border-radius:99px;font-size:12px;border:1px solid rgba(16,185,129,0.4)">Account Google Drive Rilevato sul Server</span>"#
+        r#"<span style="background:rgba(34,197,94,0.16);color:#4ade80;padding:4px 10px;border-radius:99px;font-size:12px;border:1px solid rgba(34,197,94,0.35)">Sessione Google Attiva sul Server</span>"#
+    } else if !cfg.client_id.is_empty() {
+        r#"<span style="background:rgba(56,189,248,0.16);color:#38bdf8;padding:4px 10px;border-radius:99px;font-size:12px;border:1px solid rgba(56,189,248,0.35)">Client OAuth Pre-Installato</span>"#
     } else {
-        r#"<span style="background:rgba(245,185,50,0.16);color:#f5b932;padding:3px 9px;border-radius:99px;font-size:12px;border:1px solid rgba(245,185,50,0.4)">Scegli Metodo di Accesso</span>"#
+        r#"<span style="background:rgba(245,185,50,0.14);color:#f5b932;padding:4px 10px;border-radius:99px;font-size:12px;border:1px solid rgba(245,185,50,0.35)">Configurazione Client OAuth</span>"#
     };
 
     format!(
@@ -153,15 +306,15 @@ pub fn build_direct_login_portal_html(cfg: &GDriveConfig) -> String {
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Login Diretto Google Drive — GOLDSMP</title>
+  <title>Client OAuth & Login Google Drive — GOLDSMP</title>
   <style>
     * {{ box-sizing: border-box; }}
     body {{
       margin: 0;
       min-height: 100vh;
-      background: radial-gradient(circle at 50% 0%, rgba(245,185,50,0.15), #09090e 70%);
-      color: #f3f4f6;
-      font-family: system-ui, -apple-system, sans-serif;
+      background: radial-gradient(circle at 50% 0%, rgba(245,185,50,0.12), #08080c 68%);
+      color: #f4f1ea;
+      font-family: 'Inter', system-ui, -apple-system, sans-serif;
       display: flex;
       align-items: center;
       justify-content: center;
@@ -169,54 +322,61 @@ pub fn build_direct_login_portal_html(cfg: &GDriveConfig) -> String {
     }}
     .portal {{
       width: 100%;
-      max-width: 640px;
-      background: #13131c;
-      border: 1px solid rgba(245,185,50,0.48);
+      max-width: 680px;
+      background: #111118;
+      border: 1px solid rgba(245,185,50,0.32);
       border-radius: 16px;
       padding: 28px;
-      box-shadow: 0 24px 70px rgba(0,0,0,0.85), 0 0 36px rgba(245,185,50,0.12);
+      box-shadow: 0 24px 70px rgba(0,0,0,0.85), inset 0 1px 0 rgba(255,255,255,0.06);
     }}
     h1 {{
       margin: 0 0 6px;
-      font-size: 22px;
-      color: #fff4d2;
+      font-size: 21px;
+      color: #fff6dc;
       display: flex;
       align-items: center;
       justify-content: space-between;
       gap: 10px;
       flex-wrap: wrap;
+      letter-spacing: -0.01em;
     }}
-    p.sub {{ margin: 0 0 20px; font-size: 13.5px; color: #9ca3af; line-height: 1.45; }}
+    p.sub {{ margin: 0 0 20px; font-size: 13.5px; color: #a1a1aa; line-height: 1.5; }}
     .option-card {{
-      background: rgba(255,255,255,0.03);
-      border: 1px solid rgba(255,255,255,0.1);
+      background: #161620;
+      border: 1px solid rgba(255,255,255,0.08);
       border-radius: 12px;
-      padding: 16px;
+      padding: 16px 18px;
       margin-bottom: 14px;
     }}
     .option-card.highlight {{
-      border-color: rgba(56,189,248,0.45);
-      background: linear-gradient(135deg, rgba(56,189,248,0.1), rgba(20,20,30,0.9));
+      border-color: rgba(56,189,248,0.35);
+      background: linear-gradient(160deg, rgba(56,189,248,0.08), #14141d 70%);
     }}
     .option-title {{
       font-weight: 700;
-      font-size: 15px;
-      color: #fff4d2;
+      font-size: 14.5px;
+      color: #fff6dc;
       margin-bottom: 6px;
       display: flex;
       align-items: center;
       justify-content: space-between;
+      gap: 8px;
     }}
-    .option-desc {{ font-size: 12.5px; color: #9ca3af; margin-bottom: 12px; line-height: 1.4; }}
-    input {{
+    .option-desc {{ font-size: 12.5px; color: #a1a1aa; margin-bottom: 12px; line-height: 1.45; }}
+    input, textarea {{
       width: 100%;
       padding: 9px 12px;
       border-radius: 8px;
-      border: 1px solid rgba(255,255,255,0.16);
-      background: #0b0b12;
+      border: 1px solid rgba(255,255,255,0.14);
+      background: #0a0a0f;
       color: #fff;
       font-size: 13px;
       margin-bottom: 8px;
+      font-family: inherit;
+    }}
+    input:focus, textarea:focus {{
+      outline: none;
+      border-color: #f5b932;
     }}
     .btn {{
       display: inline-flex;
@@ -231,7 +391,10 @@ pub fn build_direct_login_portal_html(cfg: &GDriveConfig) -> String {
       border: none;
       text-decoration: none;
       width: 100%;
+      transition: opacity 0.15s ease, transform 0.1s ease;
     }}
+    .btn:hover {{ opacity: 0.94; }}
+    .btn:active {{ transform: translateY(1px); }}
     .btn-gold {{
       background: linear-gradient(135deg, #f5b932, #d97706);
       color: #09090e;
@@ -241,33 +404,32 @@ pub fn build_direct_login_portal_html(cfg: &GDriveConfig) -> String {
       color: #09090e;
     }}
     .btn-outline {{
-      background: transparent;
-      border: 1px solid rgba(255,255,255,0.2);
+      background: rgba(255,255,255,0.03);
+      border: 1px solid rgba(255,255,255,0.16);
       color: #e5e7eb;
       margin-top: 6px;
     }}
-    code {{ color: #f5b932; font-size: 12px; }}
+    code {{ color: #f5b932; font-size: 12px; background: rgba(245,185,50,0.08); padding: 1px 5px; border-radius: 4px; }}
   </style>
 </head>
 <body>
   <div class="portal">
     <h1>
-      <span>Accesso Diretto Google Drive</span>
+      <span>Client OAuth & Accesso Google Drive</span>
       {cli_badge}
     </h1>
     <p class="sub">
-      Collega il tuo Google Drive a <strong>GOLDSMP</strong>: i backup verranno caricati automaticamente in
-      <code>{server_folder}/&lt;nome_istanza&gt;_backup/</code> mantenendo solo gli ultimi <strong>{max_keep}</strong> backup.
+      Il client OAuth può essere preconfigurato nelle condizioni di installazione (<code>oauth_client.json</code> o variabili <code>GOLDSMP_OAUTH_CLIENT_ID</code>). I backup vengono sincronizzati in <code>{server_folder}/&lt;nome_istanza&gt;_backup/</code> (retention max <strong>{max_keep}</strong>).
     </p>
 
     <!-- Opzione 1: 1-Click Direct Server Session / Plugin Google Drive -->
     <div class="option-card highlight">
       <div class="option-title">
-        <span>1. Accesso Istantaneo 1-Click (Account Google Connesso)</span>
-        <span style="color:#38bdf8;font-size:11.5px">Consigliato • Zero Config</span>
+        <span>1. Accesso Istantaneo 1-Click (Ambiente Server / Installazione)</span>
+        <span style="color:#38bdf8;font-size:11.5px">Zero Config</span>
       </div>
       <div class="option-desc">
-        Usa direttamente l'autenticazione Google Drive attiva sull'ambiente server senza dover inserire Client ID o Client Secret.
+        Usa direttamente il client Google Drive pre-autenticato sull'ambiente server senza inserire manualmente le chiavi.
       </div>
       <form method="GET" action="/api/gdrive/quick-connect">
         <button type="submit" class="btn btn-cyan">
@@ -276,20 +438,23 @@ pub fn build_direct_login_portal_html(cfg: &GDriveConfig) -> String {
       </form>
     </div>
 
-    <!-- Opzione 2: Login OAuth2 Diretto Pagina Google -->
+    <!-- Opzione 2: Client OAuth2 Ufficiale o Importazione JSON Google Cloud -->
     <div class="option-card">
       <div class="option-title">
-        <span>2. Pagina Login Ufficiale Google OAuth2 (Scelta Account)</span>
+        <span>2. Client OAuth2 Google Cloud (ID / Secret o file client_secret.json)</span>
       </div>
       <div class="option-desc">
-        Inserisci il tuo Google OAuth Client ID (e Secret) per aprire subito la schermata ufficiale di login Google (<code>accounts.google.com</code>) con redirect automatico a <code>{redirect_uri}</code>.
+        Carica il file <code>client_secret.json</code> / <code>oauth_client.json</code> scaricato da Google Cloud Console per compilare automaticamente Client ID e Secret, oppure inseriscili qui sotto. Redirect URI consigliato: <code>{redirect_uri}</code>
       </div>
-      <form method="GET" action="/api/gdrive/direct-oauth">
-        <input name="client_id" placeholder="Google OAuth2 Client ID (xxxx.apps.googleusercontent.com)" value="{client_id}" required />
-        <input name="client_secret" type="password" placeholder="Google OAuth2 Client Secret" />
-        <input name="redirect_uri" value="{redirect_uri}" placeholder="Redirect URI" />
+      <div style="margin-bottom:8px">
+        <input type="file" id="jsonFile" accept=".json,application/json" style="font-size:12px;padding:7px" />
+      </div>
+      <form method="GET" action="/api/gdrive/direct-oauth" id="oauthForm">
+        <input id="cid" name="client_id" placeholder="Google OAuth2 Client ID (xxxx.apps.googleusercontent.com)" value="{client_id}" required />
+        <input id="csec" name="client_secret" type="password" placeholder="Google OAuth2 Client Secret (GOCSPX-...)" />
+        <input id="curi" name="redirect_uri" value="{redirect_uri}" placeholder="Redirect URI" />
         <button type="submit" class="btn btn-gold">
-          Vai alla Pagina di Login Google &rarr;
+          Salva Client OAuth & Apri Login Google &rarr;
         </button>
       </form>
     </div>
@@ -312,6 +477,29 @@ pub fn build_direct_login_portal_html(cfg: &GDriveConfig) -> String {
 
     <a href="/" class="btn btn-outline" style="margin-top:4px">Torna al Pannello GOLDSMP</a>
   </div>
+  <script>
+    document.getElementById('jsonFile').addEventListener('change', function(e) {{
+      var file = e.target.files && e.target.files[0];
+      if (!file) return;
+      var reader = new FileReader();
+      reader.onload = function(evt) {{
+        try {{
+          var data = JSON.parse(evt.target.result);
+          var node = data.web || data.installed || data;
+          if (node.client_id) document.getElementById('cid').value = node.client_id;
+          if (node.client_secret) document.getElementById('csec').value = node.client_secret;
+          if (Array.isArray(node.redirect_uris) && node.redirect_uris.length > 0) {{
+            document.getElementById('curi').value = node.redirect_uris[0];
+          }} else if (node.redirect_uri) {{
+            document.getElementById('curi').value = node.redirect_uri;
+          }}
+        }} catch (err) {{
+          alert('File JSON non valido: ' + err.message);
+        }}
+      }};
+      reader.readAsText(file);
+    }});
+  </script>
 </body>
 </html>"#,
         cli_badge = cli_badge,

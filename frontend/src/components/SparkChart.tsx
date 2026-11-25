@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 
 interface SparkChartProps {
   title: string;
@@ -12,11 +12,34 @@ export const SparkChart: React.FC<SparkChartProps> = ({
   title,
   unit,
   data,
-  color = '#f59e0b',
+  color = '#f5b932',
   maxOverride,
 }) => {
-  const width = 560;
-  const height = 150;
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const [chartWidth, setChartWidth] = useState(520);
+
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const updateSize = () => {
+      const w = el.clientWidth;
+      if (w > 100) {
+        setChartWidth(Math.floor(w));
+      }
+    };
+    updateSize();
+    if (typeof ResizeObserver !== 'undefined') {
+      const ro = new ResizeObserver(updateSize);
+      ro.observe(el);
+      return () => ro.disconnect();
+    } else {
+      window.addEventListener('resize', updateSize);
+      return () => window.removeEventListener('resize', updateSize);
+    }
+  }, []);
+
+  const width = Math.max(220, chartWidth);
+  const height = width < 360 ? 128 : 148;
   const padX = 8;
   const padY = 12;
 
@@ -44,10 +67,18 @@ export const SparkChart: React.FC<SparkChartProps> = ({
   const gradId = `grad-${title.replace(/[^a-zA-Z0-9]/g, '')}`;
 
   return (
-    <div className="card">
-      <div className="card-header" style={{ marginBottom: 8 }}>
-        <span className="card-title">{title}</span>
-        <div style={{ display: 'flex', gap: 14, fontFamily: 'var(--font-mono)', fontSize: 12 }}>
+    <div className="card" ref={containerRef} style={{ minWidth: 0, overflow: 'hidden' }}>
+      <div className="card-header" style={{ marginBottom: 8, flexWrap: 'wrap', gap: 6 }}>
+        <span className="card-title" style={{ fontSize: 14.5 }}>{title}</span>
+        <div
+          style={{
+            display: 'flex',
+            gap: 12,
+            flexWrap: 'wrap',
+            fontFamily: 'var(--font-mono)',
+            fontSize: 11.5,
+          }}
+        >
           <span style={{ color: 'var(--text-secondary)' }}>
             Picco: <strong style={{ color: 'var(--text-primary)' }}>{peak.toFixed(1)} {unit}</strong>
           </span>
@@ -60,21 +91,27 @@ export const SparkChart: React.FC<SparkChartProps> = ({
       {data.length < 2 ? (
         <div
           style={{
-            height: 140,
+            height: height - 10,
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
+            textAlign: 'center',
             color: 'var(--text-muted)',
-            fontSize: 12.5,
+            fontSize: 12,
+            padding: '0 8px',
           }}
         >
-          Raccolta campioni telemetria in corso (campionamento ogni 5s)...
+          Raccolta campioni telemetria in corso (ogni 5s)...
         </div>
       ) : (
-        <svg viewBox={`0 0 ${width} ${height}`} style={{ width: '100%', height: 145, display: 'block' }}>
+        <svg
+          viewBox={`0 0 ${width} ${height}`}
+          preserveAspectRatio="none"
+          style={{ width: '100%', height, display: 'block', overflow: 'visible' }}
+        >
           <defs>
             <linearGradient id={gradId} x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor={color} stopOpacity="0.32" />
+              <stop offset="0%" stopColor={color} stopOpacity="0.30" />
               <stop offset="100%" stopColor={color} stopOpacity="0.02" />
             </linearGradient>
           </defs>
@@ -90,9 +127,18 @@ export const SparkChart: React.FC<SparkChartProps> = ({
             />
           ))}
           <path d={areaPath} fill={`url(#${gradId})`} />
-          <path d={linePath} fill="none" stroke={color} strokeWidth="2.2" strokeLinejoin="round" />
+          <path
+            d={linePath}
+            fill="none"
+            stroke={color}
+            strokeWidth="2"
+            strokeLinejoin="round"
+            strokeLinecap="round"
+            vectorEffect="non-scaling-stroke"
+          />
         </svg>
       )}
     </div>
   );
 };
+

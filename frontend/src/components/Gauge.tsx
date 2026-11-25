@@ -18,7 +18,7 @@ export const Gauge: React.FC<GaugeProps> = ({
   const clamped = Math.max(0, Math.min(100, isNaN(value) ? 0 : value));
   const radius = 44;
   const circumference = 2 * Math.PI * radius;
-  const arcLength = circumference * 0.75; // 270-degree Stark HUD arc
+  const arcLength = circumference * 0.75; // 270-degree arc
   const dashOffset = arcLength - (clamped / 100) * arcLength;
 
   const strokeColor =
@@ -32,29 +32,41 @@ export const Gauge: React.FC<GaugeProps> = ({
         flexDirection: 'column',
         alignItems: 'center',
         justifyContent: 'center',
-        padding: '16px 12px',
+        padding: '14px 10px',
         gap: 6,
+        minWidth: 0,
       }}
     >
-      <div style={{ position: 'relative', width: 118, height: 118 }}>
-        <svg viewBox="0 0 116 116" width="118" height="118">
-          {/* Outer HUD segmented ring */}
+      <div
+        style={{
+          position: 'relative',
+          width: '100%',
+          maxWidth: 112,
+          aspectRatio: '1 / 1',
+          margin: '0 auto',
+        }}
+      >
+        <svg
+          viewBox="0 0 116 116"
+          style={{ width: '100%', height: '100%', display: 'block' }}
+        >
+          {/* Outer segmented ring */}
           <circle
             cx="58"
             cy="58"
             r="53"
             fill="none"
-            stroke="rgba(245, 185, 50, 0.18)"
+            stroke="rgba(245, 185, 50, 0.16)"
             strokeWidth="1.2"
             strokeDasharray="6 4"
           />
-          {/* Inner Arc Reactor ring */}
+          {/* Inner ring */}
           <circle
             cx="58"
             cy="58"
             r="35"
             fill="none"
-            stroke="rgba(56, 189, 248, 0.14)"
+            stroke="rgba(56, 189, 248, 0.12)"
             strokeWidth="1"
           />
           {/* Track */}
@@ -69,7 +81,7 @@ export const Gauge: React.FC<GaugeProps> = ({
             strokeDasharray={`${arcLength} ${circumference}`}
             transform="rotate(135 58 58)"
           />
-          {/* Active Stark Gold / Arc bar */}
+          {/* Active arc */}
           <circle
             cx="58"
             cy="58"
@@ -82,8 +94,7 @@ export const Gauge: React.FC<GaugeProps> = ({
             strokeDashoffset={dashOffset}
             transform="rotate(135 58 58)"
             style={{
-              transition: 'stroke-dashoffset 0.4s ease, stroke 0.3s ease',
-              filter: 'drop-shadow(0 0 6px rgba(245, 185, 50, 0.45))',
+              transition: 'stroke-dashoffset 0.35s ease, stroke 0.25s ease',
             }}
           />
         </svg>
@@ -95,21 +106,33 @@ export const Gauge: React.FC<GaugeProps> = ({
             flexDirection: 'column',
             alignItems: 'center',
             justifyContent: 'center',
-            paddingTop: 6,
+            paddingTop: 4,
+            textAlign: 'center',
           }}
         >
           <span
             style={{
               fontFamily: 'var(--font-mono)',
               fontWeight: 700,
-              fontSize: 16,
-              color: '#fff4d2',
+              fontSize: 'clamp(12px, 1.3vw, 15px)',
+              color: '#fff6dc',
+              lineHeight: 1.15,
             }}
           >
             {displayValue}
           </span>
           {sublabel && (
-            <span style={{ fontSize: 10.5, color: 'var(--text-muted)', marginTop: 2 }}>
+            <span
+              style={{
+                fontSize: 10,
+                color: 'var(--text-muted)',
+                marginTop: 2,
+                maxWidth: '90%',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                whiteSpace: 'nowrap',
+              }}
+            >
               {sublabel}
             </span>
           )}
@@ -118,11 +141,12 @@ export const Gauge: React.FC<GaugeProps> = ({
       <span
         style={{
           fontFamily: 'var(--font-display)',
-          fontSize: 13.5,
+          fontSize: 12.5,
           fontWeight: 700,
-          letterSpacing: '0.07em',
+          letterSpacing: '0.06em',
           textTransform: 'uppercase',
           color: 'var(--text-secondary)',
+          textAlign: 'center',
         }}
       >
         {label}
@@ -130,3 +154,4 @@ export const Gauge: React.FC<GaugeProps> = ({
     </div>
   );
 };
+

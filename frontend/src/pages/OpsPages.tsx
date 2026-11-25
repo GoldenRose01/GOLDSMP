@@ -5,13 +5,423 @@ import {
   HostSystemInfo,
   Instance,
   PanelSettings,
+  SentinelConfig,
+  SentinelStatus,
   UpdateStatus,
   UpdaterConfig,
   User,
   WebhookConfig,
 } from '../types';
-import { DownloadCloud, Plus, RefreshCw, Save, Send, Trash2 } from 'lucide-react';
+import {
+  Activity,
+  AlertTriangle,
+  CheckCircle2,
+  DownloadCloud,
+  Plus,
+  RefreshCw,
+  Save,
+  Send,
+  ShieldCheck,
+  Trash2,
+} from 'lucide-react';
 import { formatRamValue, useRamUnit } from '../utils/ramUnit';
+
+// --- COOLIFY SENTINEL WATCHDOG & HEALTH AGENT PAGE ---
+export const SentinelPage: React.FC<{
+  onSelectInstance: (id: string) => void;
+  onNotify: (m: string) => void;
+}> = ({ onSelectInstance, onNotify }) => {
+  const [status, setStatus] = useState<SentinelStatus | null>(null);
+  const [cfg, setCfg] = useState<SentinelConfig | null>(null);
+  const [runningCheck, setRunningCheck] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [ramUnit] = useRamUnit();
+
+  const load = async () => {
+    try {
+      const s = await api<SentinelStatus>('/api/sentinel/status');
+      setStatus(s);
+      if (!cfg) setCfg(s.config);
+    } catch {}
+  };
+
+  useEffect(() => {
+    load();
+    const t = setInterval(load, 4000);
+    return () => clearInterval(t);
+  }, []);
+
+  const triggerCheck = async () => {
+    setRunningCheck(true);
+    try {
+      const s = await api<SentinelStatus>('/api/sentinel/check', { method: 'POST' });
+      setStatus(s);
+      onNotify(
+        `Heartbeat Coolify Sentinel completato: ${s.instances.length} istanze controllate (${s.agent_state})`
+      );
+    } catch (err: any) {
+      onNotify(err.message);
+    } finally {
+      setRunningCheck(false);
+    }
+  };
+
+  const saveSentinelConfig = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!cfg) return;
+    setSaving(true);
+    try {
+      const s = await api<SentinelStatus>('/api/sentinel/config', {
+        method: 'PUT',
+        body: JSON.stringify(cfg),
+      });
+      setStatus(s);
+      setCfg(s.config);
+      onNotify('Configurazione Coolify Sentinel salvata!');
+    } catch (err: any) {
+      onNotify(err.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (!status || !cfg) {
+    return <div className="card">Inizializzazione Coolify Sentinel...</div>;
+  }
+
+  const healthyCount = status.instances.filter((i) => i.health_state === 'healthy').length;
+  const activeCount = status.instances.filter((i) => i.process_status === 'running').length;
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+      <div className="page-header" style={{ marginBottom: 4 }}>
+        <div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+            <h1>Coolify Sentinel • Watchdog & Auto-Healing</h1>
+            <span
+              className={`status-badge ${
+                status.agent_state === 'active'
+                  ? 'status-running'
+                  : status.agent_state === 'warning'
+                  ? 'status-starting'
+                  : status.agent_state === 'critical'
+                  ? 'status-crashed'
+                  : 'status-stopped'
+              }`}
+            >
+              <span className="status-dot" />
+              Sentinel {status.agent_state}
+            </span>
+          </div>
+          <p>
+            Controllo continuo liveness TCP sulle porte, soglie risorse Host/Istanze, auto-heal dei processi crashati e push telemetria compatibile con Coolify Sentinel.
+          </p>
+        </div>
+
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <button
+            id="btn-sentinel-force-check"
+            type="button"
+            className="btn btn-primary"
+            disabled={runningCheck}
+            onClick={triggerCheck}
+          >
+            <RefreshCw size={15} />
+            {runningCheck ? 'Sonda TCP in corso...' : 'Esegui Check Sentinel Ora'}
+          </button>
+        </div>
+      </div>
+
+      {/* Sentinel KPIs */}
+      <div className="grid-4">
+        <div className="card">
+          <div className="kpi-value" style={{ color: 'var(--success)' }}>
+            {healthyCount} / {activeCount}
+          </div>
+          <div className="kpi-label">Istanze Attive Healthy (TCP OK)</div>
+        </div>
+        <div className="card">
+          <div className="kpi-value" style={{ color: 'var(--accent)' }}>
+            {status.total_checks}
+          </div>
+          <div className="kpi-label">
+            Cicli Heartbeat ({status.last_heartbeat ? new Date(status.last_heartbeat).toLocaleTimeString() : '--'})
+          </div>
+        </div>
+        <div className="card">
+          <div className="kpi-value" style={{ color: 'var(--arc-cyan)' }}>
+            {status.total_auto_heals}
+          </div>
+          <div className="kpi-label">Auto-Heal Eseguiti (Self-Repair)</div>
+        </div>
+        <div className="card">
+          <div
+            className="kpi-value"
+            style={{
+              color:
+                status.active_warnings.length > 0 ? 'var(--warning)' : 'var(--success)',
+            }}
+          >
+            {status.active_warnings.length}
+          </div>
+          <div className="kpi-label">Allerte Soglia Attive</div>
+        </div>
+      </div>
+
+      {/* Active Warnings Banner if any */}
+      {status.active_warnings.length > 0 && (
+        <div
+          className="card"
+          style={{
+            background: 'var(--warning-soft)',
+            borderColor: 'rgba(245, 185, 50, 0.35)',
+          }}
+        >
+          <div className="card-header" style={{ marginBottom: 8 }}>
+            <span className="card-title" style={{ color: 'var(--accent-hover)' }}>
+              <AlertTriangle size={16} /> Allerte Rilevate da Coolify Sentinel
+            </span>
+          </div>
+          <ul style={{ paddingLeft: 18, fontSize: 13, display: 'flex', flexDirection: 'column', gap: 4 }}>
+            {status.active_warnings.map((w, idx) => (
+              <li key={idx}>{w}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {/* Per-Instance Sentinel Health Matrix */}
+      <div className="card">
+        <div className="card-header">
+          <span className="card-title">
+            <Activity size={16} color="var(--arc-cyan)" /> Matrice Liveness Istanze & Probe TCP Porte
+          </span>
+          <span style={{ fontSize: 12, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>
+            Intervallo sonda: ogni {cfg.check_interval_secs}s
+          </span>
+        </div>
+
+        <div className="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Istanza</th>
+                <th>Porta TCP</th>
+                <th>Stato Processo</th>
+                <th>Salute Sentinel</th>
+                <th>Latenza TCP</th>
+                <th>CPU / RAM ({ramUnit})</th>
+                <th>Auto-Heal</th>
+              </tr>
+            </thead>
+            <tbody>
+              {status.instances.map((inst) => (
+                <tr
+                  key={inst.instance_id}
+                  style={{ cursor: 'pointer' }}
+                  onClick={() => onSelectInstance(inst.instance_id)}
+                >
+                  <td style={{ fontWeight: 600 }}>{inst.instance_name}</td>
+                  <td style={{ fontFamily: 'var(--font-mono)', fontSize: 12 }}>:{inst.port}</td>
+                  <td>
+                    <span className={`status-badge status-${inst.process_status}`}>
+                      <span className="status-dot" />
+                      {inst.process_status}
+                    </span>
+                  </td>
+                  <td>
+                    <span
+                      className={`status-badge ${
+                        inst.health_state === 'healthy'
+                          ? 'status-running'
+                          : inst.health_state === 'degraded' || inst.health_state === 'starting' || inst.health_state === 'healing'
+                          ? 'status-starting'
+                          : inst.health_state === 'unhealthy'
+                          ? 'status-crashed'
+                          : 'status-stopped'
+                      }`}
+                    >
+                      {inst.health_state}
+                    </span>
+                  </td>
+                  <td style={{ fontFamily: 'var(--font-mono)', fontSize: 12 }}>
+                    {inst.port_reachable ? (
+                      <span style={{ color: 'var(--success)' }}>{inst.latency_ms ?? 1} ms (OK)</span>
+                    ) : inst.process_status === 'running' ? (
+                      <span style={{ color: 'var(--warning)' }}>
+                        Non raggiungibile ({inst.consecutive_failures} fail)
+                      </span>
+                    ) : (
+                      <span style={{ color: 'var(--text-muted)' }}>--</span>
+                    )}
+                  </td>
+                  <td style={{ fontFamily: 'var(--font-mono)', fontSize: 12 }}>
+                    {inst.cpu_percent.toFixed(1)}% • {formatRamValue(inst.memory_mb, ramUnit)} ({inst.memory_usage_pct.toFixed(0)}%)
+                  </td>
+                  <td style={{ fontFamily: 'var(--font-mono)', fontSize: 12 }}>
+                    {inst.auto_heals_count}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* Sentinel Configuration & Coolify Push Endpoint + Event Log */}
+      <div className="grid-2">
+        <form onSubmit={saveSentinelConfig} className="card" style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+          <div className="card-header" style={{ marginBottom: 2 }}>
+            <span className="card-title">
+              <ShieldCheck size={16} color="var(--accent)" /> Configurazione Watchdog & Coolify Push
+            </span>
+            <button id="btn-save-sentinel-config" type="submit" className="btn btn-primary btn-sm" disabled={saving}>
+              <Save size={13} /> {saving ? 'Salvataggio...' : 'Salva Sentinel'}
+            </button>
+          </div>
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13 }}>
+              <input
+                type="checkbox"
+                checked={cfg.enabled}
+                onChange={(e) => setCfg({ ...cfg, enabled: e.target.checked })}
+              />
+              Abilita Coolify Sentinel Watchdog in background
+            </label>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13 }}>
+              <input
+                type="checkbox"
+                checked={cfg.auto_heal_crashed}
+                onChange={(e) => setCfg({ ...cfg, auto_heal_crashed: e.target.checked })}
+              />
+              Auto-Heal automatico se un&apos;istanza entra in stato Crashed
+            </label>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13 }}>
+              <input
+                type="checkbox"
+                checked={cfg.auto_heal_unresponsive_port}
+                onChange={(e) => setCfg({ ...cfg, auto_heal_unresponsive_port: e.target.checked })}
+              />
+              Auto-Heal se la porta TCP non risponde per 3 cicli consecutivi
+            </label>
+          </div>
+
+          <div className="grid-2">
+            <div className="field">
+              <label>Intervallo Heartbeat (secondi)</label>
+              <input
+                type="number"
+                min={5}
+                max={600}
+                value={cfg.check_interval_secs}
+                onChange={(e) => setCfg({ ...cfg, check_interval_secs: Number(e.target.value) })}
+              />
+            </div>
+            <div className="field">
+              <label>Soglia Allerta CPU Host (%)</label>
+              <input
+                type="number"
+                min={20}
+                max={100}
+                value={cfg.cpu_warn_threshold}
+                onChange={(e) => setCfg({ ...cfg, cpu_warn_threshold: Number(e.target.value) })}
+              />
+            </div>
+            <div className="field">
+              <label>Soglia Allerta RAM (%)</label>
+              <input
+                type="number"
+                min={20}
+                max={100}
+                value={cfg.mem_warn_threshold}
+                onChange={(e) => setCfg({ ...cfg, mem_warn_threshold: Number(e.target.value) })}
+              />
+            </div>
+            <div className="field">
+              <label>Soglia Allerta Disco (%)</label>
+              <input
+                type="number"
+                min={20}
+                max={100}
+                value={cfg.disk_warn_threshold}
+                onChange={(e) => setCfg({ ...cfg, disk_warn_threshold: Number(e.target.value) })}
+              />
+            </div>
+          </div>
+
+          <div className="field">
+            <label>Coolify Sentinel Push Endpoint URL (opzionale)</label>
+            <input
+              placeholder="https://coolify.example.com/api/v1/sentinel/push"
+              value={cfg.push_endpoint}
+              onChange={(e) => setCfg({ ...cfg, push_endpoint: e.target.value })}
+            />
+          </div>
+          <div className="field">
+            <label>Coolify Sentinel Bearer Token (opzionale)</label>
+            <input
+              type="password"
+              placeholder="Token autenticazione Coolify Sentinel..."
+              value={cfg.push_token}
+              onChange={(e) => setCfg({ ...cfg, push_token: e.target.value })}
+            />
+            {status.last_push_status && (
+              <span className="field-hint">Ultimo push esterno: {status.last_push_status}</span>
+            )}
+          </div>
+        </form>
+
+        <div className="card" style={{ display: 'flex', flexDirection: 'column' }}>
+          <div className="card-header">
+            <span className="card-title">
+              <CheckCircle2 size={16} color="var(--success)" /> Registro Eventi Sentinel
+            </span>
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 390, overflowY: 'auto' }}>
+            {status.recent_events.map((ev, i) => (
+              <div
+                key={i}
+                style={{
+                  padding: '9px 12px',
+                  borderRadius: 'var(--radius-sm)',
+                  background: 'var(--bg-input)',
+                  border: '1px solid var(--border-subtle)',
+                  fontSize: 12.5,
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 3,
+                }}
+              >
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+                  <span
+                    className={`status-badge ${
+                      ev.level === 'critical'
+                        ? 'status-crashed'
+                        : ev.level === 'warn'
+                        ? 'status-starting'
+                        : ev.level === 'heal'
+                        ? 'status-running'
+                        : 'status-stopped'
+                    }`}
+                    style={{ fontSize: 10, padding: '1px 7px' }}
+                  >
+                    {ev.level} • {ev.target}
+                  </span>
+                  <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-muted)' }}>
+                    {new Date(ev.timestamp).toLocaleTimeString()}
+                  </span>
+                </div>
+                <div style={{ color: 'var(--text-primary)' }}>{ev.message}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 
 // --- WEBHOOKS PAGE ---
 export const WebhooksPage: React.FC<{
@@ -425,9 +835,32 @@ export const SettingsPage: React.FC<{
   const [updCfg, setUpdCfg] = useState<UpdaterConfig | null>(null);
   const [checking, setChecking] = useState(false);
 
+  // Install-time OAuth Client (Google Drive & OIDC) state
+  const [gdStatus, setGdStatus] = useState<any>(null);
+  const [gdClientId, setGdClientId] = useState('');
+  const [gdClientSecret, setGdClientSecret] = useState('');
+  const [gdRedirectUri, setGdRedirectUri] = useState(
+    `${window.location.origin}/api/gdrive/callback`
+  );
+  const [gdFolder, setGdFolder] = useState('GOLDSMP-Server');
+  const [gdMaxBackups, setGdMaxBackups] = useState(5);
+  const [gdEnabled, setGdEnabled] = useState(true);
+
   useEffect(() => {
     if (settings) setForm(settings);
   }, [settings]);
+
+  const loadGdriveStatus = async () => {
+    try {
+      const g = await api<any>('/api/gdrive/status');
+      setGdStatus(g);
+      setGdClientId(g.client_id || '');
+      setGdRedirectUri(g.redirect_uri || `${window.location.origin}/api/gdrive/callback`);
+      setGdFolder(g.server_folder_name || 'GOLDSMP-Server');
+      setGdMaxBackups(g.max_backups_per_instance || 5);
+      setGdEnabled(g.enabled ?? true);
+    } catch {}
+  };
 
   useEffect(() => {
     api<UpdateStatus>('/api/updater/status')
@@ -436,6 +869,7 @@ export const SettingsPage: React.FC<{
         setUpdCfg(s.config);
       })
       .catch(() => {});
+    loadGdriveStatus();
   }, []);
 
   if (!form) return null;
@@ -453,8 +887,43 @@ export const SettingsPage: React.FC<{
       });
       setUpdStatus(u);
     }
+    const gUpdated = await api<any>('/api/gdrive/config', {
+      method: 'PUT',
+      body: JSON.stringify({
+        enabled: gdEnabled,
+        client_id: gdClientId,
+        client_secret: gdClientSecret || undefined,
+        redirect_uri: gdRedirectUri,
+        server_folder_name: gdFolder,
+        max_backups_per_instance: Number(gdMaxBackups) || 5,
+      }),
+    }).catch(() => null);
+    if (gUpdated) {
+      setGdStatus(gUpdated);
+      setGdClientSecret('');
+    }
     onSaved(updated);
-    onNotify('Impostazioni e configurazione aggiornamenti salvate');
+    onNotify('Impostazioni, Client OAuth e configurazione aggiornamenti salvati');
+  };
+
+  const handleImportOAuthJson = async (file: File | null) => {
+    if (!file) return;
+    try {
+      const raw = await file.text();
+      const updated = await api<any>('/api/gdrive/import-json', {
+        method: 'POST',
+        body: JSON.stringify({
+          raw_json: raw,
+          persist_install_file: true,
+        }),
+      });
+      setGdStatus(updated);
+      setGdClientId(updated.client_id || '');
+      setGdRedirectUri(updated.redirect_uri || gdRedirectUri);
+      onNotify('Client OAuth importato e salvato nelle condizioni di installazione (oauth_client.json)!');
+    } catch (err: any) {
+      onNotify(`Errore importazione JSON OAuth: ${err.message}`);
+    }
   };
 
   const [ramUnit] = useRamUnit();
@@ -497,15 +966,151 @@ export const SettingsPage: React.FC<{
   };
 
   return (
-    <form onSubmit={save} style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+    <form id="form-panel-settings" onSubmit={save} style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
       <div className="page-header" style={{ marginBottom: 4 }}>
         <div>
-          <h1>Impostazioni, Auto-Updater & OIDC SSO</h1>
-          <p>Aggiornamenti automatici senza interruzioni, branding white-label e autenticazione OIDC.</p>
+          <h1>Impostazioni, Client OAuth & Auto-Updater</h1>
+          <p>Provisioning Client OAuth d&apos;installazione (Google Drive & OIDC SSO), aggiornamenti zero-downtime e branding.</p>
         </div>
-        <button type="submit" className="btn btn-primary">
+        <button id="btn-save-all-settings" type="submit" className="btn btn-primary">
           <Save size={15} /> Salva Tutto
         </button>
+      </div>
+
+      {/* Install-Time OAuth Client Provisioning Card */}
+      <div className="card">
+        <div className="card-header" style={{ flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+            <span className="card-title">Client OAuth (Condizioni di Installazione & Google Cloud Backup)</span>
+            <span
+              className={`status-badge ${
+                gdStatus?.connected
+                  ? 'status-running'
+                  : gdClientId
+                  ? 'status-starting'
+                  : 'status-stopped'
+              }`}
+            >
+              <span className="status-dot" />
+              {gdStatus?.connected
+                ? `Connesso (${gdStatus.connected_email || gdStatus.auth_mode || 'Attivo'})`
+                : gdClientId
+                ? 'Client OAuth Preconfigurato'
+                : 'In attesa di Client OAuth'}
+            </span>
+          </div>
+
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+            <label
+              htmlFor="input-import-oauth-json-settings"
+              className="btn btn-secondary btn-sm"
+              style={{ cursor: 'pointer' }}
+              title="Carica il file client_secret.json / oauth_client.json di Google Cloud e salvalo nelle condizioni di installazione"
+            >
+              Importa client_secret.json (Installazione)
+            </label>
+            <input
+              id="input-import-oauth-json-settings"
+              type="file"
+              accept=".json,application/json"
+              style={{ display: 'none' }}
+              onChange={(e) => handleImportOAuthJson(e.target.files?.[0] || null)}
+            />
+            <button
+              id="btn-open-oauth-portal-settings"
+              type="button"
+              className="btn btn-primary btn-sm"
+              onClick={() => {
+                const popup = window.open(
+                  '/api/gdrive/login?portal=1',
+                  'goldsmp_oauth_portal',
+                  'width=700,height=780'
+                );
+                const t = setInterval(() => {
+                  if (!popup || popup.closed) {
+                    clearInterval(t);
+                    loadGdriveStatus();
+                  }
+                }, 1200);
+              }}
+            >
+              Apri Portale Login & Scelta Account OAuth
+            </button>
+          </div>
+        </div>
+
+        <p style={{ fontSize: 12.5, color: 'var(--text-secondary)', marginBottom: 14 }}>
+          Il client OAuth viene caricato automaticamente all&apos;installazione da{' '}
+          <code style={{ color: 'var(--accent-hover)' }}>goldsmp-data/oauth_client.json</code> o dalle variabili{' '}
+          <code style={{ color: 'var(--accent-hover)' }}>GOLDSMP_OAUTH_CLIENT_ID</code> /{' '}
+          <code style={{ color: 'var(--accent-hover)' }}>GOLDSMP_OAUTH_CLIENT_SECRET</code>. Puoi anche importare il JSON di Google Cloud qui sotto per renderlo persistente.
+        </p>
+
+        <div className="grid-3" style={{ marginBottom: 12 }}>
+          <div className="field">
+            <label htmlFor="input-gd-client-id">Google OAuth2 Client ID</label>
+            <input
+              id="input-gd-client-id"
+              value={gdClientId}
+              onChange={(e) => setGdClientId(e.target.value)}
+              placeholder="xxxx.apps.googleusercontent.com"
+            />
+          </div>
+          <div className="field">
+            <label htmlFor="input-gd-client-secret">
+              Google OAuth2 Client Secret {gdStatus?.has_client_secret ? '(già salvato)' : ''}
+            </label>
+            <input
+              id="input-gd-client-secret"
+              type="password"
+              value={gdClientSecret}
+              onChange={(e) => setGdClientSecret(e.target.value)}
+              placeholder={gdStatus?.has_client_secret ? '•••••••• (lascia vuoto per mantenere)' : 'GOCSPX-...'}
+            />
+          </div>
+          <div className="field">
+            <label htmlFor="input-gd-redirect-uri">OAuth2 Redirect URI</label>
+            <input
+              id="input-gd-redirect-uri"
+              value={gdRedirectUri}
+              onChange={(e) => setGdRedirectUri(e.target.value)}
+            />
+          </div>
+        </div>
+
+        <div className="grid-3">
+          <div className="field">
+            <label htmlFor="input-gd-folder">Cartella Root Backup su Google Drive</label>
+            <input
+              id="input-gd-folder"
+              value={gdFolder}
+              onChange={(e) => setGdFolder(e.target.value)}
+              placeholder="GOLDSMP-Server"
+            />
+          </div>
+          <div className="field">
+            <label htmlFor="input-gd-max-backups">Max Backup Mantenuti per Istanza</label>
+            <input
+              id="input-gd-max-backups"
+              type="number"
+              min={1}
+              max={100}
+              value={gdMaxBackups}
+              onChange={(e) => setGdMaxBackups(Number(e.target.value))}
+            />
+          </div>
+          <div className="field" style={{ justifyContent: 'center' }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 18 }}>
+              <input
+                id="chk-gd-enabled"
+                type="checkbox"
+                checked={gdEnabled}
+                onChange={(e) => setGdEnabled(e.target.checked)}
+              />
+              Sincronizza automaticamente ogni backup su Google Drive
+            </label>
+          </div>
+        </div>
       </div>
 
       {/* Zero-Downtime Auto-Updater Card */}
@@ -534,6 +1139,7 @@ export const SettingsPage: React.FC<{
             </div>
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
               <button
+                id="btn-updater-check"
                 type="button"
                 className="btn btn-secondary btn-sm"
                 disabled={checking}
@@ -542,6 +1148,7 @@ export const SettingsPage: React.FC<{
                 <RefreshCw size={13} /> {checking ? 'Controllo...' : 'Controlla Ora'}
               </button>
               <button
+                id="btn-updater-apply"
                 type="button"
                 className="btn btn-primary btn-sm"
                 disabled={checking}
@@ -555,6 +1162,7 @@ export const SettingsPage: React.FC<{
               </button>
               {(updStatus.ui_hot_updated || updStatus.state === 'ready_refresh') && (
                 <button
+                  id="btn-updater-refresh"
                   type="button"
                   className="btn btn-success btn-sm"
                   onClick={() => window.location.reload()}
@@ -564,6 +1172,7 @@ export const SettingsPage: React.FC<{
               )}
               {updStatus.binary_staged && (
                 <button
+                  id="btn-updater-restart"
                   type="button"
                   className="btn btn-secondary btn-sm"
                   disabled={restartingBin}
@@ -606,15 +1215,17 @@ export const SettingsPage: React.FC<{
 
           <div className="grid-3">
             <div className="field">
-              <label>Repository GitHub (owner/repo)</label>
+              <label htmlFor="input-updater-repo">Repository GitHub (owner/repo)</label>
               <input
+                id="input-updater-repo"
                 value={updCfg.repo}
                 onChange={(e) => setUpdCfg({ ...updCfg, repo: e.target.value })}
               />
             </div>
             <div className="field">
-              <label>Intervallo Controllo (minuti)</label>
+              <label htmlFor="input-updater-interval">Intervallo Controllo (minuti)</label>
               <input
+                id="input-updater-interval"
                 type="number"
                 min={5}
                 value={updCfg.check_interval_mins}
@@ -626,6 +1237,7 @@ export const SettingsPage: React.FC<{
             <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: 8 }}>
               <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13 }}>
                 <input
+                  id="chk-updater-autocheck"
                   type="checkbox"
                   checked={updCfg.auto_check}
                   onChange={(e) => setUpdCfg({ ...updCfg, auto_check: e.target.checked })}
@@ -634,6 +1246,7 @@ export const SettingsPage: React.FC<{
               </label>
               <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13 }}>
                 <input
+                  id="chk-updater-autodownload"
                   type="checkbox"
                   checked={updCfg.auto_download}
                   onChange={(e) => setUpdCfg({ ...updCfg, auto_download: e.target.checked })}
@@ -657,30 +1270,34 @@ export const SettingsPage: React.FC<{
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
             <div className="field">
-              <label>Nome Pannello</label>
+              <label htmlFor="input-panel-name">Nome Pannello</label>
               <input
+                id="input-panel-name"
                 value={form.panel_name}
                 onChange={(e) => setForm({ ...form, panel_name: e.target.value })}
               />
             </div>
             <div className="field">
-              <label>Colore Accento Principale</label>
+              <label htmlFor="input-accent-color">Colore Accento Principale</label>
               <div style={{ display: 'flex', gap: 8 }}>
                 <input
+                  id="input-accent-color-picker"
                   type="color"
                   style={{ width: 52, padding: 2 }}
                   value={form.accent_color}
                   onChange={(e) => setForm({ ...form, accent_color: e.target.value })}
                 />
                 <input
+                  id="input-accent-color"
                   value={form.accent_color}
                   onChange={(e) => setForm({ ...form, accent_color: e.target.value })}
                 />
               </div>
             </div>
             <div className="field">
-              <label>Retention Metriche SQLite (Giorni)</label>
+              <label htmlFor="input-metrics-retention">Retention Metriche SQLite (Giorni)</label>
               <input
+                id="input-metrics-retention"
                 type="number"
                 value={form.metrics_retention_days}
                 onChange={(e) =>
@@ -693,11 +1310,12 @@ export const SettingsPage: React.FC<{
 
         <div className="card">
           <div className="card-header">
-            <span className="card-title">OIDC Single Sign-On (Authentik / Keycloak / Authelia)</span>
+            <span className="card-title">OIDC Single Sign-On (Authentik / Keycloak / Google OIDC)</span>
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
             <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13 }}>
               <input
+                id="chk-oidc-enabled"
                 type="checkbox"
                 checked={form.oidc_enabled}
                 onChange={(e) => setForm({ ...form, oidc_enabled: e.target.checked })}
@@ -705,23 +1323,26 @@ export const SettingsPage: React.FC<{
               Abilita Login OIDC SSO
             </label>
             <div className="field">
-              <label>Issuer URL</label>
+              <label htmlFor="input-oidc-issuer">Issuer URL</label>
               <input
-                placeholder="https://auth.example.com/application/o/goldsmp/"
+                id="input-oidc-issuer"
+                placeholder="https://accounts.google.com oppure https://auth.example.com/..."
                 value={form.oidc_issuer_url}
                 onChange={(e) => setForm({ ...form, oidc_issuer_url: e.target.value })}
               />
             </div>
             <div className="field">
-              <label>Client ID</label>
+              <label htmlFor="input-oidc-client-id">Client ID</label>
               <input
+                id="input-oidc-client-id"
                 value={form.oidc_client_id}
                 onChange={(e) => setForm({ ...form, oidc_client_id: e.target.value })}
               />
             </div>
             <div className="field">
-              <label>Client Secret</label>
+              <label htmlFor="input-oidc-client-secret">Client Secret</label>
               <input
+                id="input-oidc-client-secret"
                 type="password"
                 value={form.oidc_client_secret}
                 onChange={(e) => setForm({ ...form, oidc_client_secret: e.target.value })}
@@ -765,3 +1386,4 @@ export const SettingsPage: React.FC<{
     </form>
   );
 };
+

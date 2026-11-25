@@ -678,6 +678,59 @@ pub async fn updater_restart(
     Ok(Json(serde_json::json!({ "status": "restarting" })))
 }
 
+// --- Coolify Sentinel Watchdog & Health Agent ---
+
+pub async fn sentinel_status(
+    State(state): State<AppState>,
+    _auth: AuthUser,
+) -> Json<crate::sentinel::SentinelStatus> {
+    Json(state.sentinel.get_status())
+}
+
+pub async fn sentinel_check_now(
+    State(state): State<AppState>,
+    auth: AuthUser,
+) -> Json<crate::sentinel::SentinelStatus> {
+    let st = state.sentinel.run_check_cycle().await;
+    state.db.log_audit(
+        &auth.0.username,
+        "SENTINEL_CHECK",
+        "sentinel",
+        &format!(
+            "Heartbeat Sentinel forzato: stato={}, istanze={}",
+            st.agent_state,
+            st.instances.len()
+        ),
+        "local",
+    );
+    Json(st)
+}
+
+pub async fn sentinel_update_config(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Json(cfg): Json<crate::sentinel::SentinelConfig>,
+) -> Result<Json<crate::sentinel::SentinelStatus>, (StatusCode, String)> {
+    let st = state
+        .sentinel
+        .save_config(cfg)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    state.db.log_audit(
+        &auth.0.username,
+        "SENTINEL_CONFIG",
+        "sentinel",
+        &format!(
+            "enabled={}, interval={}s, auto_heal_crashed={}, auto_heal_port={}",
+            st.config.enabled,
+            st.config.check_interval_secs,
+            st.config.auto_heal_crashed,
+            st.config.auto_heal_unresponsive_port
+        ),
+        "local",
+    );
+    Ok(Json(st))
+}
+
 // --- Installed Mods Folder Manager & Modrinth Auto-Updater ---
 
 #[derive(Deserialize)]
@@ -1035,6 +1088,73 @@ pub async fn gdrive_update_config(
     Ok(Json(cfg.into()))
 }
 
+#[derive(Deserialize)]
+pub struct ImportOAuthClientJsonReq {
+    pub raw_json: String,
+    #[serde(default)]
+    pub persist_install_file: bool,
+}
+
+pub async fn gdrive_import_client_json(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Json(req): Json<ImportOAuthClientJsonReq>,
+) -> Result<Json<crate::gdrive_backup::GDrivePublicStatus>, (StatusCode, String)> {
+    let val: serde_json::Value = serde_json::from_str(&req.raw_json)
+        .map_err(|e| (StatusCode::BAD_REQUEST, format!("JSON non valido: {}", e)))?;
+    let node = val
+        .get("web")
+        .or_else(|| val.get("installed"))
+        .unwrap_or(&val);
+
+    let client_id = node
+        .get("client_id")
+        .and_then(|v| v.as_str())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .ok_or((
+            StatusCode::BAD_REQUEST,
+            "Campo 'client_id' non trovato nel JSON".to_string(),
+        ))?;
+
+    let client_secret = node
+        .get("client_secret")
+        .and_then(|v| v.as_str())
+        .map(|s| s.trim().to_string())
+        .unwrap_or_default();
+
+    let mut cfg = crate::gdrive_backup::load_config(&state.db);
+    cfg.client_id = client_id;
+    if !client_secret.is_empty() {
+        cfg.client_secret = client_secret;
+    }
+    if let Some(arr) = node.get("redirect_uris").and_then(|v| v.as_array()) {
+        if let Some(first) = arr.first().and_then(|v| v.as_str()).filter(|s| !s.trim().is_empty()) {
+            cfg.redirect_uri = first.trim().to_string();
+        }
+    } else if let Some(ru) = node.get("redirect_uri").and_then(|v| v.as_str()).filter(|s| !s.trim().is_empty()) {
+        cfg.redirect_uri = ru.trim().to_string();
+    }
+
+    crate::gdrive_backup::save_config(&state.db, &cfg)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+
+    if req.persist_install_file {
+        let install_file = state.data_dir.join("oauth_client.json");
+        let _ = std::fs::write(&install_file, &req.raw_json);
+    }
+
+    state.db.log_audit(
+        &auth.0.username,
+        "GDRIVE_OAUTH_IMPORT",
+        &cfg.client_id,
+        "Client OAuth Google importato e salvato nelle condizioni di installazione",
+        "local",
+    );
+
+    Ok(Json(cfg.into()))
+}
+
 pub async fn gdrive_auth_url(
     State(state): State<AppState>,
     _auth: AuthUser,
@@ -1045,11 +1165,22 @@ pub async fn gdrive_auth_url(
     Ok(Json(serde_json::json!({ "url": url })))
 }
 
+#[derive(Deserialize)]
+pub struct LoginPortalQuery {
+    #[serde(default)]
+    pub portal: Option<String>,
+}
+
 pub async fn gdrive_direct_login_page(
     State(state): State<AppState>,
+    Query(q): Query<LoginPortalQuery>,
 ) -> axum::response::Html<String> {
     let cfg = crate::gdrive_backup::load_config(&state.db);
-    axum::response::Html(crate::gdrive_backup::build_direct_login_portal_html(&cfg))
+    let force_portal = q.portal.as_deref() == Some("1") || q.portal.as_deref() == Some("true");
+    axum::response::Html(crate::gdrive_backup::build_direct_login_portal_html(
+        &cfg,
+        force_portal,
+    ))
 }
 
 pub async fn gdrive_quick_connect(

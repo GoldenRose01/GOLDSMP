@@ -195,14 +195,21 @@ impl Database {
         let has_settings: i64 =
             conn.query_row("SELECT COUNT(*) FROM kv_settings WHERE key = 'panel_settings'", [], |r| r.get(0))?;
         if has_settings == 0 {
+            let oidc_issuer = std::env::var("GOLDSMP_OIDC_ISSUER_URL").unwrap_or_default();
+            let oidc_cid = std::env::var("GOLDSMP_OIDC_CLIENT_ID")
+                .or_else(|_| std::env::var("GOLDSMP_OAUTH_CLIENT_ID"))
+                .unwrap_or_default();
+            let oidc_sec = std::env::var("GOLDSMP_OIDC_CLIENT_SECRET")
+                .or_else(|_| std::env::var("GOLDSMP_OAUTH_CLIENT_SECRET"))
+                .unwrap_or_default();
             let default_settings = PanelSettings {
                 panel_name: "GOLDSMP".into(),
-                accent_color: "#f59e0b".into(),
+                accent_color: "#f5b932".into(),
                 logo_url: "".into(),
-                oidc_enabled: false,
-                oidc_issuer_url: "".into(),
-                oidc_client_id: "".into(),
-                oidc_client_secret: "".into(),
+                oidc_enabled: !oidc_issuer.trim().is_empty() && !oidc_cid.trim().is_empty(),
+                oidc_issuer_url: oidc_issuer,
+                oidc_client_id: oidc_cid,
+                oidc_client_secret: oidc_sec,
                 metrics_retention_days: 30,
                 incoming_webhook_token: Uuid::new_v4().to_string().replace('-', ""),
             };

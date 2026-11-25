@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { api, formatDuration } from '../api/client';
-import { HostSystemInfo, Instance } from '../types';
+import { HostSystemInfo, Instance, SentinelStatus } from '../types';
 import { getGameArt } from '../utils/gameArtwork';
 import { formatRamPair, formatRamValue, useRamUnit } from '../utils/ramUnit';
 import {
@@ -12,6 +12,7 @@ import {
   Plus,
   Search,
   Settings2,
+  ShieldCheck,
   Sparkles,
   Square,
   Terminal,
@@ -23,18 +24,22 @@ import { InstanceTabId } from './InstanceDetailPage';
 interface InstancesPageProps {
   instances: Instance[];
   sysInfo: HostSystemInfo | null;
+  sentinel?: SentinelStatus | null;
   onRefresh: () => void;
   onSelectInstance: (id: string, tab?: InstanceTabId) => void;
   onOpenCreate: () => void;
+  onOpenSentinel?: () => void;
   onNotify: (msg: string) => void;
 }
 
 export const InstancesPage: React.FC<InstancesPageProps> = ({
   instances,
   sysInfo,
+  sentinel,
   onRefresh,
   onSelectInstance,
   onOpenCreate,
+  onOpenSentinel,
   onNotify,
 }) => {
   const [search, setSearch] = useState('');
@@ -99,43 +104,55 @@ export const InstancesPage: React.FC<InstancesPageProps> = ({
       {/* High-Visibility Header with Prominent Create Button */}
       <div className="page-header">
         <div>
-          <h1>Istanze, Server & GitHub Web Services</h1>
+          <h1>Istanze, Server & Coolify Sentinel</h1>
           <p>
-            Gestione nativa in Rust • Horizon MC, Minecraft, SteamCMD & Auto-Deploy da link GitHub
+            Gestione nativa in Rust • Watchdog Coolify Sentinel attivo • Horizon MC, Minecraft, SteamCMD & GitHub Web
           </p>
         </div>
-        <button
-          className="btn btn-primary"
-          onClick={onOpenCreate}
-          style={{
-            padding: '11px 22px',
-            fontSize: 14,
-            boxShadow: '0 0 24px rgba(245, 185, 50, 0.45)',
-            border: '1px solid rgba(255, 240, 179, 0.65)',
-          }}
-        >
-          <Sparkles size={16} />
-          + Crea Nuova Istanza
-        </button>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          {onOpenSentinel && (
+            <button
+              id="btn-instances-open-sentinel"
+              type="button"
+              className="btn btn-secondary"
+              onClick={onOpenSentinel}
+            >
+              <ShieldCheck size={16} color="var(--success)" />
+              Sentinel ({sentinel?.agent_state || 'active'})
+            </button>
+          )}
+          <button
+            id="btn-open-create-instance"
+            className="btn btn-primary"
+            onClick={onOpenCreate}
+            style={{
+              padding: '10px 20px',
+              fontSize: 13.5,
+            }}
+          >
+            <Sparkles size={16} />
+            + Crea Nuova Istanza
+          </button>
+        </div>
       </div>
 
       {/* 1-Click GitHub WebService Auto-Deploy Bar */}
       <form
+        id="form-quick-github-deploy"
         onSubmit={handleQuickGithubDeploy}
         className="card"
         style={{
           marginBottom: 20,
-          padding: '14px 18px',
-          border: '1px solid rgba(56, 189, 248, 0.35)',
+          padding: '16px 18px',
           background:
-            'linear-gradient(90deg, rgba(56, 189, 248, 0.1) 0%, rgba(245, 185, 50, 0.08) 60%, rgba(15, 15, 22, 0.95) 100%)',
+            'linear-gradient(135deg, rgba(56, 189, 248, 0.06) 0%, rgba(245, 185, 50, 0.05) 55%, hsl(240, 12%, 10.5%) 100%)',
         }}
       >
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <Globe size={19} color="var(--arc-cyan)" />
-            <div>
-              <div style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 15, letterSpacing: '0.04em', textTransform: 'uppercase', color: '#fff4d2' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
+            <Globe size={19} color="var(--arc-cyan)" style={{ flexShrink: 0 }} />
+            <div style={{ minWidth: 0 }}>
+              <div style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 15, letterSpacing: '0.04em', textTransform: 'uppercase', color: '#fff6dc' }}>
                 Auto-Deploy Web Service da Repository GitHub
               </div>
               <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
@@ -144,27 +161,30 @@ export const InstancesPage: React.FC<InstancesPageProps> = ({
             </div>
           </div>
 
-          <div style={{ display: 'flex', gap: 8, flex: '1 1 420px', justifyContent: 'flex-end', flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', gap: 8, flex: '1 1 320px', justifyContent: 'flex-end', flexWrap: 'wrap', minWidth: 0 }}>
             <input
-              style={{ flex: 1, minWidth: 250 }}
-              placeholder="https://github.com/owner/repo oppure owner/repo..."
+              id="input-github-repo-url"
+              style={{ flex: '1 1 180px', minWidth: 0 }}
+              placeholder="https://github.com/owner/repo..."
               value={quickRepoUrl}
               onChange={(e) => setQuickRepoUrl(e.target.value)}
             />
             <input
-              style={{ width: 95 }}
+              id="input-github-branch"
+              style={{ width: 88 }}
               placeholder="Branch"
               value={quickBranch}
               onChange={(e) => setQuickBranch(e.target.value)}
               title="Branch Git (default: main)"
             />
             <button
+              id="btn-submit-github-deploy"
               type="submit"
               className="btn btn-primary"
               disabled={deployingRepo || !quickRepoUrl.trim()}
             >
               <Globe size={15} />
-              {deployingRepo ? 'Configurazione...' : 'Crea & Avvia Web Service'}
+              {deployingRepo ? 'Configurazione...' : 'Crea & Avvia'}
             </button>
           </div>
         </div>
@@ -185,6 +205,7 @@ export const InstancesPage: React.FC<InstancesPageProps> = ({
           <div className="kpi-label">CPU Host ({sysInfo?.cpu_cores || 0} core)</div>
         </div>
         <div
+          id="card-toggle-ram-unit"
           className="card"
           onClick={toggleRamUnit}
           style={{ cursor: 'pointer' }}
@@ -234,6 +255,7 @@ export const InstancesPage: React.FC<InstancesPageProps> = ({
             }}
           />
           <input
+            id="input-filter-instances"
             style={{ width: '100%', paddingLeft: 34 }}
             placeholder="Cerca istanza o template..."
             value={search}
@@ -251,6 +273,7 @@ export const InstancesPage: React.FC<InstancesPageProps> = ({
             { id: 'generic', label: 'Generiche' },
           ].map((c) => (
             <button
+              id={`btn-filter-cat-${c.id}`}
               key={c.id}
               className={`pill-btn ${catFilter === c.id ? 'active' : ''}`}
               onClick={() => setCatFilter(c.id)}
@@ -269,9 +292,11 @@ export const InstancesPage: React.FC<InstancesPageProps> = ({
             : 0;
           const isRunning = inst.status === 'running' || inst.status === 'starting';
           const art = getGameArt(inst.template_id, inst.category);
+          const sentHealth = sentinel?.instances?.find((x) => x.instance_id === inst.id);
 
           return (
             <div
+              id={`instance-card-${inst.id}`}
               key={inst.id}
               className="instance-card"
               onClick={() => onSelectInstance(inst.id)}
@@ -279,15 +304,6 @@ export const InstancesPage: React.FC<InstancesPageProps> = ({
                 cursor: 'pointer',
                 overflow: 'hidden',
                 position: 'relative',
-                borderLeft: `4px solid ${
-                  inst.status === 'running'
-                    ? 'var(--arc-cyan)'
-                    : inst.status === 'starting' || inst.status === 'stopping'
-                    ? 'var(--accent)'
-                    : inst.status === 'crashed'
-                    ? 'var(--danger)'
-                    : 'rgba(148, 163, 184, 0.28)'
-                }`,
               }}
             >
               {/* Transparent Game Artwork Watermark inside Instance Card */}
@@ -298,19 +314,18 @@ export const InstancesPage: React.FC<InstancesPageProps> = ({
                   backgroundImage: `url("${art.bgSvgDataUri}")`,
                   backgroundRepeat: 'no-repeat',
                   backgroundPosition: 'right -12px center',
-                  backgroundSize: '250px auto',
-                  opacity: isRunning ? 0.85 : 0.55,
+                  backgroundSize: '230px auto',
+                  opacity: isRunning ? 0.72 : 0.44,
                   pointerEvents: 'none',
                   transition: 'opacity 0.25s ease',
                 }}
               />
 
               <div className="instance-card-top" style={{ position: 'relative', zIndex: 1 }}>
-                <div style={{ display: 'flex', gap: 12, minWidth: 0 }}>
+                <div style={{ display: 'flex', gap: 11, minWidth: 0 }}>
                   <div
                     className="instance-icon-box"
                     style={{
-                      borderColor: `${art.accent}66`,
                       color: art.accent,
                     }}
                   >
@@ -324,11 +339,11 @@ export const InstancesPage: React.FC<InstancesPageProps> = ({
                     <div
                       style={{
                         fontWeight: 700,
-                        fontSize: 15.5,
+                        fontSize: 15,
                         whiteSpace: 'nowrap',
                         overflow: 'hidden',
                         textOverflow: 'ellipsis',
-                        color: '#fff4d2',
+                        color: '#fff6dc',
                       }}
                     >
                       {inst.name}
@@ -341,10 +356,22 @@ export const InstancesPage: React.FC<InstancesPageProps> = ({
                         display: 'flex',
                         alignItems: 'center',
                         gap: 6,
+                        flexWrap: 'wrap',
                       }}
                     >
                       <span style={{ color: art.accent, fontWeight: 600 }}>{art.title}</span>
                       <span>• :{inst.port}</span>
+                      {sentHealth && isRunning && (
+                        <span
+                          style={{
+                            color: sentHealth.port_reachable ? 'var(--success)' : 'var(--warning)',
+                            fontSize: 10.5,
+                          }}
+                          title="Probe TCP Coolify Sentinel"
+                        >
+                          • {sentHealth.port_reachable ? `${sentHealth.latency_ms ?? 1}ms` : 'TCP wait'}
+                        </span>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -406,13 +433,14 @@ export const InstancesPage: React.FC<InstancesPageProps> = ({
                   paddingTop: 10,
                   borderTop: '1px solid var(--border-subtle)',
                   gap: 8,
+                  flexWrap: 'wrap',
                 }}
               >
                 <div
                   style={{
                     display: 'flex',
                     alignItems: 'center',
-                    gap: 12,
+                    gap: 10,
                     fontSize: 12,
                     color: 'var(--text-secondary)',
                   }}
@@ -423,9 +451,10 @@ export const InstancesPage: React.FC<InstancesPageProps> = ({
                   {isRunning && <span>Up: {formatDuration(inst.uptime_secs)}</span>}
                 </div>
 
-                <div style={{ display: 'flex', gap: 6 }}>
+                <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                   {isRunning ? (
                     <button
+                      id={`btn-stop-instance-${inst.id}`}
                       className="btn btn-danger btn-sm"
                       disabled={busyId === inst.id}
                       onClick={(e) => handleAction(e, inst.id, 'stop')}
@@ -434,6 +463,7 @@ export const InstancesPage: React.FC<InstancesPageProps> = ({
                     </button>
                   ) : (
                     <button
+                      id={`btn-start-instance-${inst.id}`}
                       className="btn btn-success btn-sm"
                       disabled={busyId === inst.id}
                       onClick={(e) => handleAction(e, inst.id, 'start')}
@@ -442,6 +472,7 @@ export const InstancesPage: React.FC<InstancesPageProps> = ({
                     </button>
                   )}
                   <button
+                    id={`btn-console-instance-${inst.id}`}
                     className="btn btn-secondary btn-sm"
                     title="Apri Console Live"
                     onClick={(e) => {
@@ -452,6 +483,7 @@ export const InstancesPage: React.FC<InstancesPageProps> = ({
                     <Terminal size={13} />
                   </button>
                   <button
+                    id={`btn-manage-instance-${inst.id}`}
                     className="btn btn-primary btn-sm"
                     onClick={(e) => {
                       e.stopPropagation();
@@ -466,15 +498,16 @@ export const InstancesPage: React.FC<InstancesPageProps> = ({
           );
         })}
 
-        {/* Always-Visible "Crea Nuova Istanza" Gold Hero Card */}
+        {/* Always-Visible "Crea Nuova Istanza" Hero Card */}
         <button
+          id="card-cta-create-instance"
           type="button"
           onClick={onOpenCreate}
           className="instance-card"
           style={{
-            border: '2px dashed rgba(245, 185, 50, 0.5)',
+            border: '1px dashed var(--border-strong)',
             background:
-              'radial-gradient(circle at 50% 35%, rgba(245, 185, 50, 0.14), rgba(15, 15, 22, 0.9))',
+              'radial-gradient(circle at 50% 35%, rgba(245, 185, 50, 0.08), hsl(240, 13%, 9.5%))',
             alignItems: 'center',
             justifyContent: 'center',
             textAlign: 'center',
@@ -484,27 +517,27 @@ export const InstancesPage: React.FC<InstancesPageProps> = ({
         >
           <div
             style={{
-              width: 48,
-              height: 48,
-              borderRadius: 12,
-              background: 'linear-gradient(135deg, #ffd466, #f5b932)',
-              color: '#160f02',
+              width: 46,
+              height: 46,
+              borderRadius: 11,
+              background: 'linear-gradient(145deg, #ffe082, #f5b932)',
+              color: '#140e02',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
-              boxShadow: '0 0 22px rgba(245, 185, 50, 0.45)',
+              boxShadow: '0 6px 18px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.5)',
             }}
           >
-            <Plus size={24} strokeWidth={2.5} />
+            <Plus size={22} strokeWidth={2.5} />
           </div>
           <div
             style={{
               fontFamily: 'var(--font-display)',
-              fontSize: 18,
+              fontSize: 17.5,
               fontWeight: 700,
-              letterSpacing: '0.05em',
+              letterSpacing: '0.04em',
               textTransform: 'uppercase',
-              color: '#fff4d2',
+              color: '#fff6dc',
             }}
           >
             + Crea Nuova Istanza

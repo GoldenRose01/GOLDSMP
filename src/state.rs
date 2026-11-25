@@ -1,6 +1,7 @@
 use crate::db::Database;
 use crate::process_manager::ProcessManager;
 use crate::security::SecurityGuard;
+use crate::sentinel::SentinelMonitor;
 use crate::updater::AutoUpdater;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -10,9 +11,11 @@ pub struct AppState {
     pub db: Database,
     pub pm: Arc<ProcessManager>,
     pub updater: Arc<AutoUpdater>,
+    pub sentinel: Arc<SentinelMonitor>,
     pub security: SecurityGuard,
     pub data_dir: PathBuf,
     pub jwt_secret: String,
     pub http: reqwest::Client,
     pub ftp_port: u16,
 }
+
